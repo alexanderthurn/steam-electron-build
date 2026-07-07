@@ -189,16 +189,20 @@ function flatten(out, cfg, platform) {
 const [cmd, arg] = process.argv.slice(2);
 const cfg = loadConfig();
 
+const OS_SHORTCUTS = ['mac', 'win', 'linux'];
+
 if (cmd === 'dev') {
     dev(cfg);
-} else if (cmd === 'build') {
-    build(cfg, arg).catch((e) => fail(e.stack ?? String(e)));
+} else if (cmd === 'build' || OS_SHORTCUTS.includes(cmd)) {
+    // `steam-electron-build mac` is shorthand for `steam-electron-build build mac`
+    build(cfg, cmd === 'build' ? arg : cmd).catch((e) => fail(e.stack ?? String(e)));
 } else {
     console.log(`steam-electron-build — wrap a web game in Electron + Steamworks
 
 Usage:
   steam-electron-build dev            run the game in Electron (Steam works if the client is running)
   steam-electron-build build <os>     depot-ready build in dist-electron/<os>   (mac | win | linux)
+  steam-electron-build <os>           shorthand for build <os>
 
 Config (all optional) in your package.json:
   "steamElectronBuild": {

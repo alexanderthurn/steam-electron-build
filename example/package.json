@@ -12,9 +12,9 @@
     "dev": "vite --host",
     "build": "vite build",
     "start": "steam-electron-build dev",
-    "build:mac": "steam-electron-build build mac",
-    "build:win": "steam-electron-build build win",
-    "build:linux": "steam-electron-build build linux"
+    "build:mac": "steam-electron-build mac",
+    "build:win": "steam-electron-build win",
+    "build:linux": "steam-electron-build linux"
   },
   "dependencies": {
     "pixi.js": "^8.19.0",

@@ -5,7 +5,7 @@ Ship any HTML5/WebGL game to Steam with Electron — PixiJS, Phaser, Three.js, v
 ```bash
 npm i -D steam-electron-build
 npx steam-electron-build dev          # your game in Electron, with real Steam
-npx steam-electron-build build win    # depot-ready folder in dist-electron/win  (mac | win | linux)
+npx steam-electron-build win          # depot-ready folder in dist-electron/win  (mac | win | linux)
 ```
 
 No config needed to start: it defaults to Steam's public test app **480 (Spacewar)**, so Steam integration works on any machine with the Steam client running — no Steamworks account, no SDK download (`steamworks.js` bundles the redistributables).
