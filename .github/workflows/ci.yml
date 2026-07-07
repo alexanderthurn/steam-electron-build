@@ -31,6 +31,11 @@ jobs:
         with:
           node-version: '22'
 
+      # The example depends on steam-electron-build via file:.. — npm does not
+      # install a linked package's deps, so install them at the repo root first.
+      - run: npm ci
+        working-directory: .
+
       - run: npm install
 
       - run: npx steam-electron-build build ${{ matrix.target }}

@@ -28,11 +28,8 @@ if (process.platform === 'linux') {
     if (app.isPackaged) {
         dirs.push(path.join(process.resourcesPath, 'app.asar.unpacked',
             'node_modules', 'steamworks.js', 'dist', 'linux64'));
-    } else {
-        try {
-            dirs.push(path.join(path.dirname(require.resolve('steamworks.js/package.json')),
-                'dist', 'linux64'));
-        } catch { /* steamworks.js not resolvable — init will warn below */ }
+    } else if (cfg.steamworksPath) {
+        dirs.push(path.join(cfg.steamworksPath, 'dist', 'linux64'));
     }
     dirs.push(path.dirname(process.execPath));
     if (process.env.LD_LIBRARY_PATH) dirs.push(process.env.LD_LIBRARY_PATH);
@@ -53,7 +50,8 @@ let sw    = null;  // steamworks.js module
 
 function initSteam() {
     try {
-        sw = require('steamworks.js');
+        // dev: absolute path resolved by the CLI; packaged: staged node_modules
+        sw = require(cfg.steamworksPath ?? 'steamworks.js');
     } catch (e) {
         console.warn('[Steam] Load failed:', e.message);
         return;

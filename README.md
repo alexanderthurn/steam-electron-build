@@ -28,6 +28,7 @@ Extracted from a shipped Steam game ([DICEPTION](https://store.steampowered.com/
 A PixiJS v8 demo lives in [`example/`](example): up to 4 players move circles with gamepads (keyboard fallback: WASD / arrows), `F` fullscreen, `Space` unlocks a test achievement, `Shift+Tab` opens the overlay.
 
 ```bash
+npm install      # the package's own deps (only needed for the file:.. link)
 cd example
 npm install
 npm start        # = steam-electron-build dev

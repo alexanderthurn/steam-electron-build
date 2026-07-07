@@ -14,6 +14,13 @@ const path = require('path');
 const PKG_ROOT = path.join(__dirname, '..');      // the steam-electron-build package
 const PROJECT = process.cwd();                    // the game project
 
+// Resolve dependencies from the game project first, then from this package.
+// Needed because with a symlinked install (file:/link:) node would otherwise
+// resolve from this file's real path, outside the game's node_modules tree.
+function resolveDep(spec) {
+    return require.resolve(spec, { paths: [PROJECT, PKG_ROOT] });
+}
+
 // ── Config ────────────────────────────────────────────────────────────────────
 
 function loadConfig() {
@@ -66,7 +73,10 @@ function webBuild(cfg) {
 
 function dev(cfg) {
     webBuild(cfg);
-    const electron = require('electron'); // resolves to the binary path
+    try {
+        cfg.steamworksPath = path.dirname(resolveDep('steamworks.js/package.json'));
+    } catch { /* runtime will warn that Steam is unavailable */ }
+    const electron = require(resolveDep('electron')); // resolves to the binary path
     const res = spawnSync(electron, [path.join(PKG_ROOT, 'runtime', 'main.cjs')], {
         cwd: PROJECT,
         stdio: 'inherit',
@@ -94,14 +104,16 @@ async function build(cfg, platform) {
 
     // steamworks.js ships prebuilt binaries — just copy it (and its type-only
     // deps, which electron-builder wants present to resolve the tree) in
-    for (const dep of ['steamworks.js', '@types/node', 'undici-types']) {
+    const swPkg = resolveDep('steamworks.js/package.json'); // throws if missing
+    fs.cpSync(path.dirname(swPkg), path.join(stage, 'node_modules', 'steamworks.js'), { recursive: true });
+    for (const dep of ['@types/node', 'undici-types']) {
         try {
-            const from = path.dirname(require.resolve(`${dep}/package.json`, { paths: [PKG_ROOT] }));
+            const from = path.dirname(resolveDep(`${dep}/package.json`));
             fs.cpSync(from, path.join(stage, 'node_modules', dep), { recursive: true });
-        } catch { /* optional sub-dep not installed — fine */ }
+        } catch { /* type-only sub-dep not installed — fine */ }
     }
 
-    const swVersion = require('steamworks.js/package.json').version;
+    const swVersion = require(swPkg).version;
     fs.writeFileSync(path.join(stage, 'package.json'), JSON.stringify({
         name: cfg.executableName,
         version: cfg.version,
@@ -117,7 +129,7 @@ async function build(cfg, platform) {
     const out = path.join(PROJECT, 'dist-electron', platform);
     fs.rmSync(out, { recursive: true, force: true });
 
-    const builder = require('electron-builder');
+    const builder = require(resolveDep('electron-builder'));
     const targets = {
         mac: builder.Platform.MAC,
         win: builder.Platform.WINDOWS,
@@ -129,7 +141,7 @@ async function build(cfg, platform) {
         config: {
             appId: cfg.appId,
             productName: cfg.productName,
-            electronVersion: require('electron/package.json').version,
+            electronVersion: require(resolveDep('electron/package.json')).version,
             directories: { output: out },
             files: ['dist/**', 'electron/**'],
             asarUnpack: ['node_modules/steamworks.js/**'],
