@@ -1,0 +1,54 @@
+{
+  "name": "pixi-steam-template",
+  "version": "1.0.0",
+  "description": "PixiJS v8 + Electron + Steamworks template. Browser for dev, Electron for Steam.",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "steamAppId": 480,
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "start": "npm run build && electron .",
+    "build:mac": "npm run build && electron-builder --mac dir --config.directories.output=dist-electron/mac && node scripts/postbuild.js mac",
+    "build:win": "npm run build && electron-builder --win dir --config.directories.output=dist-electron/win && node scripts/postbuild.js win",
+    "build:linux": "npm run build && electron-builder --linux dir --config.directories.output=dist-electron/linux && node scripts/postbuild.js linux"
+  },
+  "build": {
+    "appId": "com.example.pixisteamtemplate",
+    "productName": "PixiSteamGame",
+    "icon": "build/icon.png",
+    "files": [
+      "dist/**",
+      "electron/**"
+    ],
+    "asarUnpack": [
+      "node_modules/steamworks.js/**"
+    ],
+    "mac": {
+      "identity": null
+    },
+    "linux": {
+      "executableName": "pixisteamgame",
+      "target": "dir",
+      "extraResources": [
+        {
+          "from": "build/icon.png",
+          "to": "icon.png"
+        }
+      ]
+    },
+    "win": {
+      "target": "dir"
+    }
+  },
+  "license": "MIT",
+  "dependencies": {
+    "pixi.js": "^8.19.0",
+    "steamworks.js": "^0.4.0"
+  },
+  "devDependencies": {
+    "electron": "^43.0.0",
+    "electron-builder": "^26.8.1",
+    "vite": "^8.1.3"
+  }
+}
