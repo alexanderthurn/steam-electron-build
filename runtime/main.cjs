@@ -2,8 +2,21 @@ const { app, BrowserWindow, ipcMain, shell, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
-const pkg = require('../package.json');
-const STEAM_APP_ID = Number(process.env.STEAM_APP_ID) || pkg.steamAppId;
+// ── Config ────────────────────────────────────────────────────────────────────
+// dev:      full config passed by the CLI via env (absolute paths)
+// packaged: read from the staged app's package.json "steamWrap" block
+
+const cfg = process.env.STEAM_WRAP_CONFIG
+    ? JSON.parse(process.env.STEAM_WRAP_CONFIG)
+    : require(path.join(app.getAppPath(), 'package.json')).steamWrap;
+
+const indexHtml = process.env.STEAM_WRAP_CONFIG
+    ? path.join(cfg.distDir, 'index.html')
+    : path.join(app.getAppPath(), 'dist', 'index.html');
+
+app.setName(cfg.productName);
+// Deterministic save location (same in dev and packaged builds)
+app.setPath('userData', path.join(app.getPath('appData'), cfg.appId));
 
 // ── Linux: fix library search path before any native modules load ─────────────
 // Steam sets LD_LIBRARY_PATH to its own dirs, which contain an older
@@ -11,11 +24,19 @@ const STEAM_APP_ID = Number(process.env.STEAM_APP_ID) || pkg.steamAppId;
 // glibc re-reads LD_LIBRARY_PATH on each dlopen(), so prepending here (before
 // require('steamworks.js') below) ensures the bundled version wins.
 if (process.platform === 'linux') {
-    const swLibDir = path.join(process.resourcesPath, 'app.asar.unpacked',
-        'node_modules', 'steamworks.js', 'dist', 'linux64');
-    const appDir = path.dirname(process.execPath);
-    const existing = process.env.LD_LIBRARY_PATH || '';
-    process.env.LD_LIBRARY_PATH = [swLibDir, appDir, existing].filter(Boolean).join(':');
+    const dirs = [];
+    if (app.isPackaged) {
+        dirs.push(path.join(process.resourcesPath, 'app.asar.unpacked',
+            'node_modules', 'steamworks.js', 'dist', 'linux64'));
+    } else {
+        try {
+            dirs.push(path.join(path.dirname(require.resolve('steamworks.js/package.json')),
+                'dist', 'linux64'));
+        } catch { /* steamworks.js not resolvable — init will warn below */ }
+    }
+    dirs.push(path.dirname(process.execPath));
+    if (process.env.LD_LIBRARY_PATH) dirs.push(process.env.LD_LIBRARY_PATH);
+    process.env.LD_LIBRARY_PATH = dirs.join(':');
 
     // Required for Steam Linux runtime: sandbox and zygote process model fail there.
     app.commandLine.appendSwitch('no-sandbox');
@@ -48,7 +69,7 @@ function initSteam() {
     }
 
     try {
-        steam = sw.init(STEAM_APP_ID);
+        steam = sw.init(cfg.steamAppId);
         console.log('[Steam] Initialized:', steam.localplayer.getName());
     } catch (e) {
         console.warn('[Steam] Init failed:', e.message);
@@ -72,12 +93,12 @@ function createWindow() {
     // only exists in dev and in packaged Linux builds (extraResources).
     const iconPath = app.isPackaged
         ? path.join(process.resourcesPath, 'icon.png')
-        : path.join(__dirname, '../build/icon.png');
+        : cfg.iconPath;
     mainWin = new BrowserWindow({
         width: 1280,
         height: 720,
         center: true,
-        icon: fs.existsSync(iconPath) ? iconPath : undefined,
+        icon: iconPath && fs.existsSync(iconPath) ? iconPath : undefined,
         webPreferences: {
             preload: path.join(__dirname, 'preload.cjs'),
             contextIsolation: true,
@@ -86,7 +107,7 @@ function createWindow() {
     });
     mainWin.removeMenu();
 
-    mainWin.loadFile(path.join(__dirname, '../dist/index.html'));
+    mainWin.loadFile(indexHtml);
 
     const safeSend = (ch) => { if (!mainWin?.isDestroyed()) mainWin.webContents.send(ch); };
     mainWin.on('move',   () => safeSend('win:moved'));
@@ -94,11 +115,31 @@ function createWindow() {
     mainWin.on('closed', () => { mainWin = null; });
 }
 
+// Optional per-game main-process hook (steam-wrap.extend.cjs in the game repo)
+function loadExtend() {
+    const extendPath = app.isPackaged
+        ? path.join(app.getAppPath(), 'electron', 'extend.cjs')
+        : cfg.extendPath;
+    if (!extendPath || !fs.existsSync(extendPath)) return;
+    try {
+        require(extendPath)({
+            app,
+            ipcMain,
+            getSteam: () => steam,
+            getWindow: () => mainWin,
+        });
+    } catch (e) {
+        console.warn('[steam-wrap] extend hook failed:', e.message);
+    }
+}
+
 app.whenReady().then(() => {
-    if (process.platform === 'darwin' && !app.isPackaged) {
-        app.dock.setIcon(path.join(__dirname, '../build/icon.png'));
+    if (process.platform === 'darwin' && !app.isPackaged
+        && cfg.iconPath && fs.existsSync(cfg.iconPath)) {
+        app.dock.setIcon(cfg.iconPath);
     }
     initSteam();
+    loadExtend();
     createWindow();
 });
 app.on('window-all-closed', () => {

@@ -1,59 +1,123 @@
-# pixi-steam-template
+# steam-wrap
 
-PixiJS v8 game wrapped with Electron for Steam. Develop in the browser, ship a native build to Steam — Windows, macOS, Linux/Steam Deck.
+Ship any HTML5/WebGL game to Steam with Electron — PixiJS, Phaser, Three.js, vanilla, anything that builds to a `dist/` folder. One command on your machine, the same command in CI.
+
+```bash
+npm i -D steam-wrap
+npx steam-wrap dev          # your game in Electron, with real Steam
+npx steam-wrap build win    # depot-ready folder in dist-electron/win  (mac | win | linux)
+```
+
+No config needed to start: it defaults to Steam's public test app **480 (Spacewar)**, so Steam integration works on any machine with the Steam client running — no Steamworks account, no SDK download (`steamworks.js` bundles the redistributables).
 
 Extracted from a shipped Steam game ([DICEPTION](https://store.steampowered.com/app/3689240/)), so the annoying parts are already solved:
 
-- **Steam overlay** (Shift+Tab) works, including the manual trigger fallback
-- **Steam Linux Runtime fixes** — `LD_LIBRARY_PATH` ordering, sandbox/zygote switches, clean process exit so Steam detects the game closing
-- **Achievements & stats** wired through IPC with a browser no-op fallback
-- **CI** builds all three platforms and uploads straight to Steamworks
+- **Steam overlay** (Shift+Tab), including the manual trigger fallback
+- **Achievements, stats, player identity** exposed to your game as `window.steam`
+- **Steam Deck / Steam Linux Runtime fixes** — library path ordering, sandbox/zygote switches, clean process exit so Steam notices the game closed
+- **Cloud-syncable JSON save file** in the platform app-data dir
+- **GitHub Actions**: a reusable workflow that builds all three platforms and uploads to Steamworks
 
-The included demo: up to 4 players move colored circles with gamepads (keyboard fallback: P1 = WASD, P2 = arrows). `F` toggles fullscreen, `Space` unlocks a test achievement, `Shift+Tab` opens the Steam overlay.
+## Requirements
 
-## Commands
+- Node 22+
+- Steam client installed and running (only for testing Steam features — without it the game still runs)
 
-| Command | What it does |
+## Try the example
+
+A PixiJS v8 demo lives in [`example/`](example): up to 4 players move circles with gamepads (keyboard fallback: WASD / arrows), `F` fullscreen, `Space` unlocks a test achievement, `Shift+Tab` opens the overlay.
+
+```bash
+cd example
+npm install
+npm start        # = steam-wrap dev
+```
+
+## Using it in your game
+
+Your game keeps being a normal web project. Steam features are available two ways:
+
+**Globals** (no import, any framework): the preload script injects `window.steam`, `window.electronStorage`, `window.electronWin`, `window.openUrl` — all `undefined` in a plain browser, so guard with `?.`.
+
+**Or the helper module** (safe no-ops in the browser, so `vite dev` keeps working untouched):
+
+```js
+import { steam, storage, toggleFullscreen, openUrl } from 'steam-wrap/native';
+
+const name = await steam.getUserName();        // '' in browser
+await steam.unlockAchievement('ACH_FIRST_WIN');
+await steam.setStat('STAT_GAMES_PLAYED', 42);
+
+await storage.save({ level: 3 });              // JSON file under Electron, localStorage in browser
+const data = await storage.load();
+```
+
+### Config
+
+All optional, in your `package.json`:
+
+```jsonc
+"steamWrap": {
+  "productName": "My Game",          // default: package name
+  "appId": "com.studio.mygame",      // bundle identifier (also the save folder name)
+  "steamAppId": 1234567,             // default: 480 (Spacewar)
+  "executableName": "mygame",        // linux binary name
+  "dist": "dist",                    // your web build output dir
+  "icon": "icon.png",                // 512x512 png (all platform icons derive from it)
+  "extend": "steam-wrap.extend.cjs"  // optional main-process hook, see below
+}
+```
+
+`steam-wrap dev` and `steam-wrap build` run your `npm run build` first if the script exists, then wrap whatever is in the dist dir.
+
+### Escape hatch
+
+If your game needs a custom IPC handler or direct `steamworks.js` access, put a `steam-wrap.extend.cjs` next to your package.json — it runs in the Electron main process:
+
+```js
+module.exports = ({ app, ipcMain, getSteam, getWindow }) => {
+    ipcMain.handle('my:thing', () => getSteam()?.localplayer.getLevel());
+};
+```
+
+## GitHub Actions
+
+Add one file to your game repo, `.github/workflows/steam.yml`:
+
+```yaml
+name: Steam
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+jobs:
+  steam:
+    uses: alexanderthurn/steam-wrap/.github/workflows/steam.yml@main
+    secrets: inherit
+```
+
+Every run builds Windows, macOS and Linux and uploads them as artifacts. On a `v*` tag it additionally publishes to Steam via [game-ci/steam-deploy](https://github.com/game-ci/steam-deploy) — set these repo secrets:
+
+| Secret | Value |
 |---|---|
-| `npm run dev` | Browser dev server with hot reload (Steam calls are no-ops) |
-| `npm start` | Build + run the real Electron app (Steam works if the Steam client is running) |
-| `npm run build:mac` / `build:win` / `build:linux` | Depot-ready folder in `dist-electron/<platform>/` |
+| `STEAM_USERNAME` | Steamworks build account |
+| `STEAM_CONFIG_VDF` | see the [steam-deploy docs](https://github.com/game-ci/steam-deploy#configvdf) |
+| `STEAM_APP_ID` | your app id |
+| `STEAM_RELEASE_BRANCH` | e.g. `prerelease` |
 
-The default app id is **480 (Spacewar)**, Valve's public test app — Steam integration works out of the box on any machine with Steam running, no Steamworks account needed. The `Space` key unlocks Spacewar's `ACH_WIN_ONE_GAME` achievement as a smoke test.
+Depot mapping follows the steam-deploy convention: depot ids appid+1 (win), +2 (mac), +3 (linux). Since CI just runs `npx steam-wrap build`, a CI build and a local build are identical by construction.
 
-## Starting a new game from this template
+## Steam release checklist (once per game)
 
-1. Copy the repo (or "Use this template" on GitHub)
-2. Edit `package.json`: `name`, `version`, `steamAppId`, and the `build` block (`appId`, `productName`, `linux.executableName`)
-3. Replace `build/icon.png` (512×512 — electron-builder derives all platform icons from it)
-4. Write your game in `src/` — talk to Steam/window/saves only through `src/native.js`
-
-## Architecture
-
-```
-src/            your game (pixi.js). Imports src/native.js, never Electron directly
-src/native.js   bridge: steam / win / storage / openUrl — no-ops in plain browser
-electron/       main.cjs (steamworks.js + IPC handlers), preload.cjs (contextBridge)
-scripts/        postbuild.js — flattens electron-builder output into depot folders
-```
-
-`steamworks.js` ships the Steam redistributable libraries inside its npm package (kept outside the asar via `asarUnpack`), so there is no Steamworks SDK download step — `npm ci` is the whole setup, locally and in CI.
-
-Saves: one JSON file in the app-data dir (`storage.load()` / `storage.save()` in `native.js`); localStorage in the browser. Point Steam Cloud auto-sync at it if you want cloud saves.
-
-## Steam release setup (once per game)
-
-1. In the [Steamworks partner portal](https://partner.steamgames.com/): note your **app id** and create three **depots** (Windows, macOS, Linux)
-2. In the workflow `.github/workflows/build.yml`, the depots map in order: `depot1Path` = win, `depot2` = mac, `depot3` = linux — Steamworks depot ids must be appid+1, +2, +3 (the game-ci/steam-deploy convention) or adjust the workflow
-3. Add GitHub repo secrets:
-   - `STEAM_USERNAME` — Steamworks build account
-   - `STEAM_CONFIG_VDF` — see [game-ci/steam-deploy](https://github.com/game-ci/steam-deploy#configvdf) for how to generate it
-   - `STEAM_APP_ID` — your app id
-   - `STEAM_RELEASE_BRANCH` — e.g. `prerelease`
-4. Push a tag: `git tag v1.0.0 && git push --tags` — CI builds all platforms and pushes the build to Steam
-
-`workflow_dispatch` is also enabled, so you can run builds from the Actions tab without tagging (build artifacts only, no Steam upload).
+1. Steamworks partner portal: create the app + three depots (win/mac/linux)
+2. Set `steamAppId` in your `steamWrap` config
+3. Add the workflow + secrets above
+4. `git tag v1.0.0 && git push --tags`
 
 ## Steam Deck notes
 
-The Linux build runs inside the Steam Linux Runtime. `electron/main.cjs` applies the required switches (`no-sandbox`, `no-zygote`, `in-process-gpu`, `disable-dev-shm-usage`) and prepends the bundled `libsteam_api.so` to `LD_LIBRARY_PATH` before `steamworks.js` loads — don't remove these, they look arbitrary but each one fixes a real Steam Deck failure.
+The Linux build runs inside the Steam Linux Runtime. The runtime applies the required Electron switches (`no-sandbox`, `no-zygote`, `in-process-gpu`, `disable-dev-shm-usage`) and prepends the bundled `libsteam_api.so` to `LD_LIBRARY_PATH` before `steamworks.js` loads. These look arbitrary but each one fixes a real Steam Deck failure — they're the main reason this package exists.
+
+## License
+
+MIT

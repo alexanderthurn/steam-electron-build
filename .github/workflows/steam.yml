@@ -1,10 +1,32 @@
-name: Build & Deploy to Steam
+# Reusable workflow: build a steam-wrap game for all three platforms and
+# (on v* tags) upload it to Steam. Call it from your game repo:
+#
+#   name: Steam
+#   on:
+#     push:
+#       tags: ['v*']
+#     workflow_dispatch:
+#   jobs:
+#     steam:
+#       uses: alexanderthurn/steam-wrap/.github/workflows/steam.yml@main
+#       secrets: inherit
+#
+# Required repo secrets for the deploy step (build-only works without them):
+#   STEAM_USERNAME, STEAM_CONFIG_VDF, STEAM_APP_ID, STEAM_RELEASE_BRANCH
+
+name: Steam Build & Deploy
 
 on:
-  push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: Directory containing the game's package.json
+        type: string
+        default: '.'
+      deploy:
+        description: Upload to Steam on v* tags
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -18,27 +40,28 @@ jobs:
           - os: ubuntu-latest
             target: linux
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
 
       - run: npm ci
 
-      - run: npm run build:${{ matrix.target }}
+      - run: npx steam-wrap build ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: dist-electron/${{ matrix.target }}/
+          path: ${{ inputs.working-directory }}/dist-electron/${{ matrix.target }}/
 
-  # Only runs on version tags and only if Steam secrets are configured.
   deploy-steam:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: inputs.deploy && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

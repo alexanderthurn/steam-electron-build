@@ -1,0 +1,41 @@
+# Builds the example game on all three platforms — proves the CLI, the
+# Electron runtime and the depot layout work end to end.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  example:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: win
+          - os: macos-latest
+            target: mac
+          - os: ubuntu-latest
+            target: linux
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: example
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm install
+
+      - run: npx steam-wrap build ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: example-${{ matrix.target }}
+          path: example/dist-electron/${{ matrix.target }}/

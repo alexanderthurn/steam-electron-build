@@ -4,7 +4,7 @@
  * F = fullscreen, Space = unlock test achievement (Spacewar app 480).
  */
 import { Application, Graphics, Text } from 'pixi.js';
-import { steam, toggleFullscreen } from './native.js';
+import { steam, toggleFullscreen } from 'steam-wrap/native';
 
 const PLAYER_COLORS = [0x00ffff, 0xaa00ff, 0xffe000, 0x00ff66];
 const RADIUS = 32;

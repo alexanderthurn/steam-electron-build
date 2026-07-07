@@ -1,0 +1,26 @@
+{
+  "name": "steam-wrap-example",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "steamWrap": {
+    "productName": "SteamWrapDemo",
+    "appId": "com.steamwrap.demo",
+    "steamAppId": 480
+  },
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "start": "steam-wrap dev",
+    "build:mac": "steam-wrap build mac",
+    "build:win": "steam-wrap build win",
+    "build:linux": "steam-wrap build linux"
+  },
+  "dependencies": {
+    "pixi.js": "^8.19.0",
+    "steam-wrap": "file:.."
+  },
+  "devDependencies": {
+    "vite": "^8.1.3"
+  }
+}
