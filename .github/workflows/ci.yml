@@ -33,7 +33,7 @@ jobs:
 
       - run: npm install
 
-      - run: npx steam-wrap build ${{ matrix.target }}
+      - run: npx steam-electron-build build ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
         with:

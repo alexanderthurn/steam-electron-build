@@ -1,4 +1,4 @@
-# Reusable workflow: build a steam-wrap game for all three platforms and
+# Reusable workflow: build a steam-electron-build game for all three platforms and
 # (on v* tags) upload it to Steam. Call it from your game repo:
 #
 #   name: Steam
@@ -8,7 +8,7 @@
 #     workflow_dispatch:
 #   jobs:
 #     steam:
-#       uses: alexanderthurn/steam-wrap/.github/workflows/steam.yml@main
+#       uses: alexanderthurn/steam-electron-build/.github/workflows/steam.yml@main
 #       secrets: inherit
 #
 # Required repo secrets for the deploy step (build-only works without them):
@@ -52,7 +52,7 @@ jobs:
 
       - run: npm ci
 
-      - run: npx steam-wrap build ${{ matrix.target }}
+      - run: npx steam-electron-build build ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
         with:

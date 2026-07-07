@@ -4,13 +4,13 @@ const fs = require('fs');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 // dev:      full config passed by the CLI via env (absolute paths)
-// packaged: read from the staged app's package.json "steamWrap" block
+// packaged: read from the staged app's package.json "steamElectronBuild" block
 
-const cfg = process.env.STEAM_WRAP_CONFIG
-    ? JSON.parse(process.env.STEAM_WRAP_CONFIG)
-    : require(path.join(app.getAppPath(), 'package.json')).steamWrap;
+const cfg = process.env.STEAM_ELECTRON_BUILD_CONFIG
+    ? JSON.parse(process.env.STEAM_ELECTRON_BUILD_CONFIG)
+    : require(path.join(app.getAppPath(), 'package.json')).steamElectronBuild;
 
-const indexHtml = process.env.STEAM_WRAP_CONFIG
+const indexHtml = process.env.STEAM_ELECTRON_BUILD_CONFIG
     ? path.join(cfg.distDir, 'index.html')
     : path.join(app.getAppPath(), 'dist', 'index.html');
 
@@ -115,7 +115,7 @@ function createWindow() {
     mainWin.on('closed', () => { mainWin = null; });
 }
 
-// Optional per-game main-process hook (steam-wrap.extend.cjs in the game repo)
+// Optional per-game main-process hook (steam-electron-build.extend.cjs in the game repo)
 function loadExtend() {
     const extendPath = app.isPackaged
         ? path.join(app.getAppPath(), 'electron', 'extend.cjs')
@@ -129,7 +129,7 @@ function loadExtend() {
             getWindow: () => mainWin,
         });
     } catch (e) {
-        console.warn('[steam-wrap] extend hook failed:', e.message);
+        console.warn('[steam-electron-build] extend hook failed:', e.message);
     }
 }
 

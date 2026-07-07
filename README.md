@@ -1,11 +1,11 @@
-# steam-wrap
+# steam-electron-build
 
 Ship any HTML5/WebGL game to Steam with Electron — PixiJS, Phaser, Three.js, vanilla, anything that builds to a `dist/` folder. One command on your machine, the same command in CI.
 
 ```bash
-npm i -D steam-wrap
-npx steam-wrap dev          # your game in Electron, with real Steam
-npx steam-wrap build win    # depot-ready folder in dist-electron/win  (mac | win | linux)
+npm i -D steam-electron-build
+npx steam-electron-build dev          # your game in Electron, with real Steam
+npx steam-electron-build build win    # depot-ready folder in dist-electron/win  (mac | win | linux)
 ```
 
 No config needed to start: it defaults to Steam's public test app **480 (Spacewar)**, so Steam integration works on any machine with the Steam client running — no Steamworks account, no SDK download (`steamworks.js` bundles the redistributables).
@@ -30,7 +30,7 @@ A PixiJS v8 demo lives in [`example/`](example): up to 4 players move circles wi
 ```bash
 cd example
 npm install
-npm start        # = steam-wrap dev
+npm start        # = steam-electron-build dev
 ```
 
 ## Using it in your game
@@ -42,7 +42,7 @@ Your game keeps being a normal web project. Steam features are available two way
 **Or the helper module** (safe no-ops in the browser, so `vite dev` keeps working untouched):
 
 ```js
-import { steam, storage, toggleFullscreen, openUrl } from 'steam-wrap/native';
+import { steam, storage, toggleFullscreen, openUrl } from 'steam-electron-build/native';
 
 const name = await steam.getUserName();        // '' in browser
 await steam.unlockAchievement('ACH_FIRST_WIN');
@@ -57,22 +57,22 @@ const data = await storage.load();
 All optional, in your `package.json`:
 
 ```jsonc
-"steamWrap": {
+"steamElectronBuild": {
   "productName": "My Game",          // default: package name
   "appId": "com.studio.mygame",      // bundle identifier (also the save folder name)
   "steamAppId": 1234567,             // default: 480 (Spacewar)
   "executableName": "mygame",        // linux binary name
   "dist": "dist",                    // your web build output dir
   "icon": "icon.png",                // 512x512 png (all platform icons derive from it)
-  "extend": "steam-wrap.extend.cjs"  // optional main-process hook, see below
+  "extend": "steam-electron-build.extend.cjs"  // optional main-process hook, see below
 }
 ```
 
-`steam-wrap dev` and `steam-wrap build` run your `npm run build` first if the script exists, then wrap whatever is in the dist dir.
+`steam-electron-build dev` and `steam-electron-build build` run your `npm run build` first if the script exists, then wrap whatever is in the dist dir.
 
 ### Escape hatch
 
-If your game needs a custom IPC handler or direct `steamworks.js` access, put a `steam-wrap.extend.cjs` next to your package.json — it runs in the Electron main process:
+If your game needs a custom IPC handler or direct `steamworks.js` access, put a `steam-electron-build.extend.cjs` next to your package.json — it runs in the Electron main process:
 
 ```js
 module.exports = ({ app, ipcMain, getSteam, getWindow }) => {
@@ -92,7 +92,7 @@ on:
   workflow_dispatch:
 jobs:
   steam:
-    uses: alexanderthurn/steam-wrap/.github/workflows/steam.yml@main
+    uses: alexanderthurn/steam-electron-build/.github/workflows/steam.yml@main
     secrets: inherit
 ```
 
@@ -105,12 +105,12 @@ Every run builds Windows, macOS and Linux and uploads them as artifacts. On a `v
 | `STEAM_APP_ID` | your app id |
 | `STEAM_RELEASE_BRANCH` | e.g. `prerelease` |
 
-Depot mapping follows the steam-deploy convention: depot ids appid+1 (win), +2 (mac), +3 (linux). Since CI just runs `npx steam-wrap build`, a CI build and a local build are identical by construction.
+Depot mapping follows the steam-deploy convention: depot ids appid+1 (win), +2 (mac), +3 (linux). Since CI just runs `npx steam-electron-build build`, a CI build and a local build are identical by construction.
 
 ## Steam release checklist (once per game)
 
 1. Steamworks partner portal: create the app + three depots (win/mac/linux)
-2. Set `steamAppId` in your `steamWrap` config
+2. Set `steamAppId` in your `steamElectronBuild` config
 3. Add the workflow + secrets above
 4. `git tag v1.0.0 && git push --tags`
 

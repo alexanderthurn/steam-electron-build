@@ -1,5 +1,5 @@
 node_modules/
 dist/
 dist-electron/
-.steam-wrap/
+.steam-electron-build/
 .DS_Store

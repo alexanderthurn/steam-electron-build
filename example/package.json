@@ -1,24 +1,24 @@
 {
-  "name": "steam-wrap-example",
+  "name": "steam-electron-build-example",
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "steamWrap": {
-    "productName": "SteamWrapDemo",
-    "appId": "com.steamwrap.demo",
+  "steamElectronBuild": {
+    "productName": "SteamElectronBuildDemo",
+    "appId": "com.steamelectronbuild.demo",
     "steamAppId": 480
   },
   "scripts": {
     "dev": "vite --host",
     "build": "vite build",
-    "start": "steam-wrap dev",
-    "build:mac": "steam-wrap build mac",
-    "build:win": "steam-wrap build win",
-    "build:linux": "steam-wrap build linux"
+    "start": "steam-electron-build dev",
+    "build:mac": "steam-electron-build build mac",
+    "build:win": "steam-electron-build build win",
+    "build:linux": "steam-electron-build build linux"
   },
   "dependencies": {
     "pixi.js": "^8.19.0",
-    "steam-wrap": "file:.."
+    "steam-electron-build": "file:.."
   },
   "devDependencies": {
     "vite": "^8.1.3"
