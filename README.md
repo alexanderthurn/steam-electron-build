@@ -53,6 +53,43 @@ await storage.save({ level: 3 });              // JSON file under Electron, loca
 const data = await storage.load();
 ```
 
+### Lobbies + P2P networking
+
+For multiplayer games: Steam lobbies for matchmaking/invites, and Steam's
+own P2P transport (relay-backed — no STUN/TURN, no self-hosted signaling
+server) for the actual traffic. Every id (lobby, steamId64) is a decimal
+string on this side of the bridge, never a bigint — safe to pass around,
+JSON-stringify, and compare with `===`.
+
+```js
+import { lobby, net } from 'steam-electron-build/native';
+
+// host: 'private' for a direct friend invite (not returned by getLobbies),
+// 'public' for anonymous quick-match / auto-discovery
+const room = await lobby.create('private', 4);   // { id, memberCount, memberLimit, owner, data }
+lobby.openInviteDialog();                        // Steam's own overlay invite picker
+
+// join by lobby id (e.g. from a "Join Game" accept, see onJoinRequested below)
+await lobby.join(someLobbyId);
+
+lobby.onChatUpdate(() => { /* a member joined/left — re-read lobby.getMembers() */ });
+lobby.onJoinRequested(({ lobbySteamId }) => lobby.join(lobbySteamId));
+
+// discover open public lobbies (no server-side filtering — filter client-side
+// on whatever you stored via lobby.setData/mergeFullData)
+const openRooms = await lobby.getLobbies();
+
+// P2P: send any JSON-serializable payload to a member's steamId64
+await net.send(someSteamId64, { type: 'hello' });
+net.onData(({ steamId64, data }) => console.log('from', steamId64, data));
+```
+
+Everything here is `undefined`/a safe no-op/an empty result in a plain
+browser too, same as the rest of this module — `lobby.isAvailable()` /
+`net.isAvailable()` if you need to branch explicitly (e.g. to fall back to
+your own web-only matchmaking, like WebRTC + a small backend, when not
+running under Steam).
+
 ### Config
 
 All optional, in your `package.json`:

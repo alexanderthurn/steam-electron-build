@@ -1,6 +1,6 @@
 {
   "name": "steam-electron-build",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Ship any HTML5/WebGL game to Steam with Electron. One command locally, same command in CI. Steam overlay, achievements, saves and Steam Deck fixes included.",
   "license": "MIT",
   "author": "Alexander Thurn",

@@ -69,9 +69,60 @@ function initSteam() {
     try {
         steam = sw.init(cfg.steamAppId);
         console.log('[Steam] Initialized:', steam.localplayer.getName());
+        initNetworking();
     } catch (e) {
         console.warn('[Steam] Init failed:', e.message);
     }
+}
+
+// ── Networking (lobbies + P2P) ─────────────────────────────────────────────────
+// Only ever called right after a successful sw.init() above — everything
+// here assumes `steam` is set.
+
+let currentLobby = null;  // steamworks.js Lobby handle — held here so IPC
+                           // calls (stateless request/response) have
+                           // something to call .send()/.getMembers() etc. on
+let p2pPumpTimer = null;
+
+function initNetworking() {
+    // Auto-accept every P2P session: this is aimed at "play with a friend"
+    // games, not an adversarial ladder — no handshake/allowlist needed, and
+    // without this Steam silently drops packets from a session it hasn't
+    // been told to accept.
+    steam.callback.register(steam.callback.SteamCallback.P2PSessionRequest, ({ remote }) => {
+        steam.networking.acceptP2PSession(remote);
+    });
+    steam.callback.register(steam.callback.SteamCallback.LobbyChatUpdate, (data) => {
+        safeSend('steam:lobbyChatUpdate', {
+            lobby: String(data.lobby),
+            userChanged: String(data.user_changed),
+            memberStateChange: data.member_state_change,
+        });
+    });
+    // Fires when the user accepts a Steam overlay/friends-list "Join Game"
+    // invite — may happen before the game has created or joined any lobby
+    // itself, so this is registered unconditionally at init time, not
+    // scoped to an active lobby.
+    steam.callback.register(steam.callback.SteamCallback.GameLobbyJoinRequested, (data) => {
+        safeSend('steam:lobbyJoinRequested', { lobbySteamId: String(data.lobby_steam_id) });
+    });
+
+    // isP2PPacketAvailable/readP2PPacket are pull-based (unlike the push
+    // callbacks above) — drain them on a timer. ~60Hz matches the cost of a
+    // typical game loop tick and keeps relay latency low without busy-looping.
+    p2pPumpTimer = setInterval(() => {
+        let size;
+        while ((size = steam.networking.isP2PPacketAvailable()) > 0) {
+            const pkt = steam.networking.readP2PPacket(size);
+            let data;
+            try {
+                data = JSON.parse(pkt.data.toString('utf8'));
+            } catch {
+                continue; // malformed/foreign packet — drop rather than crash the pump
+            }
+            safeSend('steam:p2pData', { steamId64: String(pkt.steamId.steamId64), data });
+        }
+    }, 16);
 }
 
 // ── Storage ───────────────────────────────────────────────────────────────────
@@ -85,6 +136,13 @@ function getSavePath() {
 // ── Window ────────────────────────────────────────────────────────────────────
 
 let mainWin = null;
+
+// module-scope (not just createWindow-local) — networking callbacks below
+// fire from Steam's own event pump, not from a window event, and still need
+// a safe way to reach the renderer.
+function safeSend(channel, data) {
+    if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send(channel, data);
+}
 
 function createWindow() {
     // Packaged mac/win builds get their icon from the bundle/exe; this path
@@ -107,7 +165,6 @@ function createWindow() {
 
     mainWin.loadFile(indexHtml);
 
-    const safeSend = (ch) => { if (!mainWin?.isDestroyed()) mainWin.webContents.send(ch); };
     mainWin.on('move',   () => safeSend('win:moved'));
     mainWin.on('resize', () => safeSend('win:resized'));
     mainWin.on('closed', () => { mainWin = null; });
@@ -209,6 +266,89 @@ ipcMain.handle('steam:resetAllStats', (_e, achievementsToo) => {
     const ok = sw.stats.resetAll(!!achievementsToo);
     if (ok) steam.stats.store();
     return ok;
+});
+
+// ── IPC: Lobbies ──────────────────────────────────────────────────────────────
+// `type`: 'private' (invite-only, not returned by getLobbies — for a direct
+// friend invite) or 'public' (discoverable — for anonymous quick-match).
+// bigint (lobby/steam ids) never crosses IPC directly — always String() out,
+// BigInt(...) back in at the steamworks.js call site, since contextBridge's
+// structured-clone support for bigint isn't a documented guarantee.
+
+const LOBBY_TYPES = { private: 0 /* Private */, public: 2 /* Public */ };
+
+function describeLobby(lobby) {
+    const limit = lobby.getMemberLimit();
+    return {
+        id: String(lobby.id),
+        memberCount: Number(lobby.getMemberCount()),
+        memberLimit: limit === null ? null : Number(limit),
+        owner: String(lobby.getOwner().steamId64),
+        data: lobby.getFullData(),
+    };
+}
+
+ipcMain.handle('steam:lobbyCreate', async (_e, type, maxMembers) => {
+    if (!steam) return null;
+    currentLobby = await steam.matchmaking.createLobby(LOBBY_TYPES[type] ?? LOBBY_TYPES.private, maxMembers);
+    return describeLobby(currentLobby);
+});
+
+ipcMain.handle('steam:lobbyJoin', async (_e, lobbyIdStr) => {
+    if (!steam) return null;
+    currentLobby = await steam.matchmaking.joinLobby(BigInt(lobbyIdStr));
+    return describeLobby(currentLobby);
+});
+
+ipcMain.handle('steam:lobbyLeave', () => {
+    currentLobby?.leave();
+    currentLobby = null;
+});
+
+ipcMain.handle('steam:lobbyGetMembers', () =>
+    currentLobby ? currentLobby.getMembers().map((m) => String(m.steamId64)) : []);
+
+ipcMain.handle('steam:lobbyGetOwner', () =>
+    currentLobby ? String(currentLobby.getOwner().steamId64) : null);
+
+ipcMain.handle('steam:lobbySetData', (_e, key, value) =>
+    currentLobby?.setData(key, value) ?? false);
+
+ipcMain.handle('steam:lobbyGetData', (_e, key) =>
+    currentLobby?.getData(key) ?? null);
+
+ipcMain.handle('steam:lobbyGetFullData', () =>
+    currentLobby?.getFullData() ?? {});
+
+ipcMain.handle('steam:lobbyMergeFullData', (_e, data) =>
+    currentLobby?.mergeFullData(data) ?? false);
+
+ipcMain.handle('steam:lobbySetJoinable', (_e, flag) =>
+    currentLobby?.setJoinable(flag) ?? false);
+
+ipcMain.handle('steam:lobbyOpenInviteDialog', () => {
+    currentLobby?.openInviteDialog();
+});
+
+ipcMain.handle('steam:lobbyGetLobbies', async () => {
+    if (!steam) return [];
+    const lobbies = await steam.matchmaking.getLobbies();
+    return lobbies.map(describeLobby);
+});
+
+// ── IPC: P2P networking ───────────────────────────────────────────────────────
+// Payloads are arbitrary JSON-serializable game messages — this layer only
+// moves bytes, it has no opinion on what's inside (mirrors how NetSession's
+// PeerJS DataConnection is used on the web build).
+//
+// SendType is a TS `const enum` in steamworks.js — erased at compile time,
+// never exported as a runtime object — so the raw value is used directly.
+const SEND_TYPE_RELIABLE = 2;
+
+ipcMain.handle('steam:netSend', (_e, steamId64Str, payload) => {
+    if (!steam) return false;
+    const buf = Buffer.from(JSON.stringify(payload), 'utf8');
+    return steam.networking.sendP2PPacket(BigInt(steamId64Str), SEND_TYPE_RELIABLE, buf);
 });
 
 // ── IPC: Storage ──────────────────────────────────────────────────────────────

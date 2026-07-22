@@ -21,6 +21,41 @@ export const steam = {
     quit:               () => window.steam?.quit() ?? Promise.resolve(),
 };
 
+// ── Steam lobbies + P2P networking ─────────────────────────────────────────────
+// `type`: 'private' (invite-only — a direct friend invite) or 'public'
+// (discoverable via getLobbies — anonymous quick-match). Every id (lobby,
+// steamId64) is a decimal string, never a bigint or number — large enough to
+// lose precision as a JS number, and safest as a plain string across the
+// Electron IPC boundary either way.
+
+export const lobby = {
+    isAvailable:      () => !!window.steam?.lobby,
+    create:           (type, maxMembers) => window.steam?.lobby.create(type, maxMembers) ?? Promise.resolve(null),
+    join:             (lobbyId) => window.steam?.lobby.join(lobbyId) ?? Promise.resolve(null),
+    leave:            () => window.steam?.lobby.leave() ?? Promise.resolve(),
+    getMembers:       () => window.steam?.lobby.getMembers() ?? Promise.resolve([]),
+    getOwner:         () => window.steam?.lobby.getOwner() ?? Promise.resolve(null),
+    setData:          (key, value) => window.steam?.lobby.setData(key, value) ?? Promise.resolve(false),
+    getData:          (key) => window.steam?.lobby.getData(key) ?? Promise.resolve(null),
+    getFullData:      () => window.steam?.lobby.getFullData() ?? Promise.resolve({}),
+    mergeFullData:    (data) => window.steam?.lobby.mergeFullData(data) ?? Promise.resolve(false),
+    setJoinable:      (flag) => window.steam?.lobby.setJoinable(flag) ?? Promise.resolve(false),
+    openInviteDialog: () => window.steam?.lobby.openInviteDialog() ?? Promise.resolve(),
+    getLobbies:       () => window.steam?.lobby.getLobbies() ?? Promise.resolve([]),
+    /** fires on any member joining/leaving the current lobby */
+    onChatUpdate:     (cb) => window.steam?.lobby.onChatUpdate(cb),
+    /** fires when the user accepts a Steam overlay/friends-list "Join Game" invite */
+    onJoinRequested:  (cb) => window.steam?.lobby.onJoinRequested(cb),
+};
+
+export const net = {
+    isAvailable: () => !!window.steam?.net,
+    /** payload is any JSON-serializable value — this layer only moves bytes */
+    send:        (steamId64, payload) => window.steam?.net.send(steamId64, payload) ?? Promise.resolve(false),
+    /** cb(({ steamId64, data }) => …) for every inbound packet, from any sender */
+    onData:      (cb) => window.steam?.net.onData(cb),
+};
+
 // ── Window ────────────────────────────────────────────────────────────────────
 
 export const win = {

@@ -16,6 +16,26 @@ contextBridge.exposeInMainWorld('steam', {
     setStat:                 (name, value) => ipcRenderer.invoke('steam:setStat', name, value),
     clearAchievement:        (id) => ipcRenderer.invoke('steam:clearAchievement', id),
     resetAllStats:           (achievementsToo) => ipcRenderer.invoke('steam:resetAllStats', achievementsToo),
+    lobby: {
+        create:            (type, maxMembers) => ipcRenderer.invoke('steam:lobbyCreate', type, maxMembers),
+        join:              (lobbyId)          => ipcRenderer.invoke('steam:lobbyJoin', lobbyId),
+        leave:             ()                 => ipcRenderer.invoke('steam:lobbyLeave'),
+        getMembers:        ()                 => ipcRenderer.invoke('steam:lobbyGetMembers'),
+        getOwner:          ()                 => ipcRenderer.invoke('steam:lobbyGetOwner'),
+        setData:           (key, value)       => ipcRenderer.invoke('steam:lobbySetData', key, value),
+        getData:           (key)              => ipcRenderer.invoke('steam:lobbyGetData', key),
+        getFullData:       ()                 => ipcRenderer.invoke('steam:lobbyGetFullData'),
+        mergeFullData:     (data)             => ipcRenderer.invoke('steam:lobbyMergeFullData', data),
+        setJoinable:       (flag)             => ipcRenderer.invoke('steam:lobbySetJoinable', flag),
+        openInviteDialog:  ()                 => ipcRenderer.invoke('steam:lobbyOpenInviteDialog'),
+        getLobbies:        ()                 => ipcRenderer.invoke('steam:lobbyGetLobbies'),
+        onChatUpdate:      (cb) => ipcRenderer.on('steam:lobbyChatUpdate', (_e, data) => cb(data)),
+        onJoinRequested:   (cb) => ipcRenderer.on('steam:lobbyJoinRequested', (_e, data) => cb(data)),
+    },
+    net: {
+        send:   (steamId64, payload) => ipcRenderer.invoke('steam:netSend', steamId64, payload),
+        onData: (cb) => ipcRenderer.on('steam:p2pData', (_e, data) => cb(data)),
+    },
 });
 
 // ── Window management ─────────────────────────────────────────────────────────
