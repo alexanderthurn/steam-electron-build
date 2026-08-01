@@ -5,11 +5,14 @@
  * returns a stub that never opens ports.
  *
  * Discovery: UDP broadcast (CS-style query/announce), filtered by appId.
+ * Also queries 127.0.0.1 so two Electron instances on one PC find each other
+ * (LAN broadcast often does not loop back to other local processes).
  * Signaling: PeerServer on the host; games use PeerJS client against host/port/path.
  */
 
 const dgram = require('dgram');
 const http = require('http');
+const net = require('net');
 const os = require('os');
 const express = require('express');
 
@@ -19,7 +22,7 @@ const DEFAULT_PEER_PORT = 9000;
 const DEFAULT_PEER_PATH = '/peerjs';
 const DEFAULT_DISCOVERY_PORT = 41234;
 const ANNOUNCE_MS = 1000;
-const DEFAULT_LIST_TIMEOUT_MS = 1500;
+const DEFAULT_LIST_TIMEOUT_MS = 2000;
 
 function primaryLanIPv4() {
     let ifaces;
@@ -53,7 +56,6 @@ function decodeMsg(buf) {
 }
 
 function broadcastAddresses() {
-    // Subnet broadcasts when we can derive them; always include limited broadcast.
     const out = new Set(['255.255.255.255']);
     let ifaces;
     try {
@@ -73,6 +75,33 @@ function broadcastAddresses() {
         }
     }
     return [...out];
+}
+
+/** Prefer an explicit port, otherwise first free port from `start` upward. */
+function findFreePort(preferred) {
+    const start = preferred && preferred > 0 ? preferred : DEFAULT_PEER_PORT;
+    return new Promise((resolve, reject) => {
+        let port = start;
+        const max = start + 64;
+        const tryOnce = () => {
+            if (port > max) {
+                reject(new Error(`No free port in ${start}–${max}`));
+                return;
+            }
+            const probe = net.createServer();
+            probe.once('error', () => {
+                port += 1;
+                tryOnce();
+            });
+            probe.listen(port, '0.0.0.0', () => {
+                probe.close((err) => {
+                    if (err) reject(err);
+                    else resolve(port);
+                });
+            });
+        };
+        tryOnce();
+    });
 }
 
 /**
@@ -131,14 +160,24 @@ function createLan(opts) {
         const buf = encodeMsg(payload);
         const port = targetPort ?? discoveryPort;
         if (targetAddr) {
-            sock.send(buf, port, targetAddr);
+            try {
+                sock.send(buf, port, targetAddr);
+            } catch {
+                /* ignore */
+            }
             return;
+        }
+        // Localhost: two Electron apps on one PC (broadcast often doesn't loop back)
+        try {
+            sock.send(buf, port, '127.0.0.1');
+        } catch {
+            /* ignore */
         }
         for (const addr of broadcastAddresses()) {
             try {
                 sock.send(buf, port, addr);
             } catch {
-                /* ignore per-iface send failures */
+                /* ignore */
             }
         }
     }
@@ -149,11 +188,18 @@ function createLan(opts) {
 
         const name = String(options.name ?? '').trim() || 'Host';
         const peerId = String(options.peerId ?? name).trim() || name;
-        const port = Number(options.port) || DEFAULT_PEER_PORT;
         const path = String(options.path || DEFAULT_PEER_PATH);
         const maxPlayers = options.maxPlayers == null ? null : Number(options.maxPlayers);
         const data = options.data && typeof options.data === 'object' ? { ...options.data } : {};
         const host = primaryLanIPv4();
+
+        let port;
+        try {
+            port = await findFreePort(Number(options.port) || DEFAULT_PEER_PORT);
+        } catch (e) {
+            console.warn('[LAN] No free PeerServer port:', e.message);
+            return null;
+        }
 
         let ExpressPeerServer;
         try {
@@ -169,34 +215,60 @@ function createLan(opts) {
         const peerServer = ExpressPeerServer(httpServer, { path: '/' });
         app.use(peerMount || '/peerjs', peerServer);
 
-        await new Promise((resolve, reject) => {
-            httpServer.once('error', reject);
-            httpServer.listen(port, '0.0.0.0', () => {
-                httpServer.off('error', reject);
-                resolve();
+        try {
+            await new Promise((resolve, reject) => {
+                const onErr = (err) => {
+                    httpServer.off('listening', onListening);
+                    reject(err);
+                };
+                const onListening = () => {
+                    httpServer.off('error', onErr);
+                    resolve();
+                };
+                httpServer.once('error', onErr);
+                httpServer.once('listening', onListening);
+                httpServer.listen(port, '0.0.0.0');
             });
-        });
+        } catch (e) {
+            console.warn('[LAN] PeerServer listen failed:', e.message);
+            try {
+                httpServer.close();
+            } catch {
+                /* ignore */
+            }
+            httpServer = null;
+            return null;
+        }
 
         room = { name, peerId, host, port, path: peerMount || '/peerjs', maxPlayers, data };
 
         advertiseSock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+        advertiseSock.on('error', (err) => {
+            console.warn('[LAN] advertise socket error:', err.message);
+        });
         advertiseSock.on('message', (msg, rinfo) => {
             const parsed = decodeMsg(msg);
             if (!parsed || parsed.appId !== appId) return;
             if (parsed.t === 'query') sendAnnounce(advertiseSock, rinfo.address, rinfo.port);
         });
-        await new Promise((resolve, reject) => {
-            advertiseSock.once('error', reject);
-            advertiseSock.bind(discoveryPort, () => {
-                try {
-                    advertiseSock.setBroadcast(true);
-                } catch {
-                    /* some platforms */
-                }
-                advertiseSock.off('error', reject);
-                resolve();
+        try {
+            await new Promise((resolve, reject) => {
+                advertiseSock.once('error', reject);
+                advertiseSock.bind(discoveryPort, () => {
+                    try {
+                        advertiseSock.setBroadcast(true);
+                    } catch {
+                        /* some platforms */
+                    }
+                    advertiseSock.off('error', reject);
+                    resolve();
+                });
             });
-        });
+        } catch (e) {
+            console.warn('[LAN] discovery bind failed:', e.message);
+            await stopHost();
+            return null;
+        }
 
         sendAnnounce(advertiseSock);
         announceTimer = setInterval(() => sendAnnounce(advertiseSock), ANNOUNCE_MS);
@@ -244,7 +316,8 @@ function createLan(opts) {
     }
 
     /**
-     * Listen for LAN announces (and poke a query broadcast). Does not require hosting.
+     * Listen for LAN announces (and poke a query broadcast + localhost).
+     * Does not require hosting.
      */
     async function listRooms(options = {}) {
         if (!enabled) return [];
@@ -252,15 +325,19 @@ function createLan(opts) {
         const rooms = new Map();
 
         const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-        const onMsg = (msg) => {
+        const onMsg = (msg, rinfo) => {
             const parsed = decodeMsg(msg);
             if (!parsed || parsed.t !== 'announce' || parsed.appId !== appId) return;
             if (!parsed.host || !parsed.port || !parsed.peerId) return;
-            const key = `${parsed.host}:${parsed.port}:${parsed.peerId}`;
+            // Same-PC discovery replies come from 127.0.0.1 — PeerJS should dial
+            // loopback, not our own LAN address (often fails between two local apps).
+            const fromLoopback = rinfo.address === '127.0.0.1' || rinfo.address === '::1';
+            const host = fromLoopback ? '127.0.0.1' : String(parsed.host);
+            const key = `${host}:${parsed.port}:${parsed.peerId}`;
             rooms.set(key, {
                 name: String(parsed.name || parsed.peerId),
                 peerId: String(parsed.peerId),
-                host: String(parsed.host),
+                host,
                 port: Number(parsed.port),
                 path: String(parsed.path || DEFAULT_PEER_PATH),
                 maxPlayers: parsed.maxPlayers == null ? null : Number(parsed.maxPlayers),
@@ -268,22 +345,28 @@ function createLan(opts) {
             });
         };
 
-        await new Promise((resolve, reject) => {
-            sock.once('error', reject);
-            sock.bind(() => {
-                try {
-                    sock.setBroadcast(true);
-                } catch {
-                    /* ignore */
-                }
-                sock.off('error', reject);
-                resolve();
+        try {
+            await new Promise((resolve, reject) => {
+                sock.once('error', reject);
+                sock.bind(() => {
+                    try {
+                        sock.setBroadcast(true);
+                    } catch {
+                        /* ignore */
+                    }
+                    sock.off('error', reject);
+                    resolve();
+                });
             });
-        });
+        } catch (e) {
+            console.warn('[LAN] listRooms bind failed:', e.message);
+            return [];
+        }
         sock.on('message', onMsg);
 
         const query = encodeMsg({ magic: MAGIC, v: PROTOCOL, t: 'query', appId });
-        for (const addr of broadcastAddresses()) {
+        const targets = new Set(['127.0.0.1', ...broadcastAddresses()]);
+        for (const addr of targets) {
             try {
                 sock.send(query, discoveryPort, addr);
             } catch {
@@ -300,7 +383,13 @@ function createLan(opts) {
             }
         });
 
-        return [...rooms.values()];
+        // Same announce can arrive via localhost and LAN — prefer loopback for PeerJS.
+        const byPeer = new Map();
+        for (const r of rooms.values()) {
+            const prev = byPeer.get(r.peerId);
+            if (!prev || r.host === '127.0.0.1') byPeer.set(r.peerId, r);
+        }
+        return [...byPeer.values()];
     }
 
     return {
