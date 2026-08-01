@@ -227,8 +227,8 @@ ipcMain.handle('steam:getSteamId', () => {
 });
 
 /**
- * Steamworks.js has no avatar API — pull the public community medium avatar
- * (64×64) for the local user and return a data URL for offline caching.
+ * Steamworks.js has no avatar API — pull the public community large avatar
+ * (184×184) for the local user and return a data URL for offline caching.
  */
 ipcMain.handle('steam:getAvatarDataUrl', async () => {
     if (!steam) return null;
@@ -240,6 +240,8 @@ ipcMain.handle('steam:getAvatarDataUrl', async () => {
         if (!xmlRes.ok) return null;
         const xml = await xmlRes.text();
         const match =
+            xml.match(/<avatarFull><!\[CDATA\[(.*?)\]\]><\/avatarFull>/) ||
+            xml.match(/<avatarFull>([^<]+)<\/avatarFull>/) ||
             xml.match(/<avatarMedium><!\[CDATA\[(.*?)\]\]><\/avatarMedium>/) ||
             xml.match(/<avatarMedium>([^<]+)<\/avatarMedium>/);
         const url = match?.[1]?.trim();
