@@ -138,6 +138,8 @@ const CONN_CONNECTED = 3;
 const CONN_CLOSED_BY_PEER = 5;
 const CONN_PROBLEM = 6;
 const ERESULT_OK = 1;
+/** Steamworks: invalid HSteamNetConnection / listen socket / poll group handle */
+const HCONN_INVALID = 0;
 
 function initNetworking() {
     if (!steam?.networkingSockets) return;
@@ -187,7 +189,7 @@ function normalizeSteamId(identity) {
 }
 
 function rememberConnection(connection, steamId64) {
-    if (!connection || connection === (k_HSteamNetConnection_Invalid ?? 0) || !steamId64) return;
+    if (!connection || connection === HCONN_INVALID || !steamId64) return;
     connBySteamId.set(steamId64, connection);
     steamIdByConn.set(connection, steamId64);
     if (pollGroup != null) {
@@ -205,7 +207,7 @@ function ensureListenSocket() {
     if (!steam?.networkingSockets || listenSocket != null) return;
     try {
         const sock = steam.networkingSockets.createListenSocketP2P(0);
-        if (!sock) {
+        if (!sock || sock === HCONN_INVALID) {
             console.warn('[Steam] createListenSocketP2P failed');
             return;
         }
@@ -218,12 +220,13 @@ function ensureListenSocket() {
 function ensureConnection(steamId64) {
     if (!steam?.networkingSockets || !steamId64) return null;
     const existing = connBySteamId.get(steamId64);
-    if (existing != null && steam.networkingSockets.isConnectionActive?.(existing) !== false) {
+    if (existing != null && existing !== HCONN_INVALID
+        && steam.networkingSockets.isConnectionActive?.(existing) !== false) {
         return existing;
     }
     try {
         const conn = steam.networkingSockets.connectP2P(steamId64, 0);
-        if (!conn) return null;
+        if (!conn || conn === HCONN_INVALID) return null;
         rememberConnection(conn, steamId64);
         return conn;
     } catch (e) {
