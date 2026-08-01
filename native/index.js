@@ -12,6 +12,8 @@ export const steam = {
     isAvailable:        () => !!window.steam,
     getUserName:        () => window.steam?.getUserName() ?? Promise.resolve(''),
     getSteamId:         () => window.steam?.getSteamId() ?? Promise.resolve('0'),
+    /** Local player's Steam medium avatar as a data URL, or null */
+    getAvatarDataUrl:   () => window.steam?.getAvatarDataUrl?.() ?? Promise.resolve(null),
     /** Steam beta branch name, or null / '' when on the default (public) branch */
     getCurrentBetaName: () => window.steam?.getCurrentBetaName?.() ?? Promise.resolve(null),
     unlockAchievement:  (id) => window.steam?.unlockAchievement(id) ?? Promise.resolve(),

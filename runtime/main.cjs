@@ -226,6 +226,36 @@ ipcMain.handle('steam:getSteamId', () => {
     return id ? String(id.steamId64 ?? id) : '0';
 });
 
+/**
+ * Steamworks.js has no avatar API — pull the public community medium avatar
+ * (64×64) for the local user and return a data URL for offline caching.
+ */
+ipcMain.handle('steam:getAvatarDataUrl', async () => {
+    if (!steam) return null;
+    try {
+        const id = steam.localplayer.getSteamId();
+        const steamId64 = String(id?.steamId64 ?? id ?? '');
+        if (!steamId64 || steamId64 === '0') return null;
+        const xmlRes = await fetch(`https://steamcommunity.com/profiles/${steamId64}/?xml=1`);
+        if (!xmlRes.ok) return null;
+        const xml = await xmlRes.text();
+        const match =
+            xml.match(/<avatarMedium><!\[CDATA\[(.*?)\]\]><\/avatarMedium>/) ||
+            xml.match(/<avatarMedium>([^<]+)<\/avatarMedium>/);
+        const url = match?.[1]?.trim();
+        if (!url || !/^https?:\/\//i.test(url)) return null;
+        const imgRes = await fetch(url);
+        if (!imgRes.ok) return null;
+        const buf = Buffer.from(await imgRes.arrayBuffer());
+        const mime = imgRes.headers.get('content-type')?.split(';')[0]?.trim() || 'image/jpeg';
+        if (!mime.startsWith('image/')) return null;
+        return `data:${mime};base64,${buf.toString('base64')}`;
+    } catch (e) {
+        console.warn('[Steam] Avatar fetch failed:', e instanceof Error ? e.message : e);
+        return null;
+    }
+});
+
 ipcMain.handle('steam:getAppId', () =>
     steam?.utils.getAppId() ?? 0);
 

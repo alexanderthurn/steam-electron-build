@@ -5,6 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('steam', {
     getUserName:             () => ipcRenderer.invoke('steam:getUserName'),
     getSteamId:              () => ipcRenderer.invoke('steam:getSteamId'),
+    getAvatarDataUrl:        () => ipcRenderer.invoke('steam:getAvatarDataUrl'),
     getAppId:                () => ipcRenderer.invoke('steam:getAppId'),
     getCurrentBetaName:      () => ipcRenderer.invoke('steam:getCurrentBetaName'),
     isDev:                   () => ipcRenderer.invoke('steam:isDev'),
