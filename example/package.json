@@ -6,7 +6,8 @@
   "steamElectronBuild": {
     "productName": "SteamElectronBuildDemo",
     "appId": "com.steamelectronbuild.demo",
-    "steamAppId": 480
+    "steamAppId": 480,
+    "lan": true
   },
   "scripts": {
     "dev": "vite --host",

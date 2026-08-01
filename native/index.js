@@ -12,6 +12,8 @@ export const steam = {
     isAvailable:        () => !!window.steam,
     getUserName:        () => window.steam?.getUserName() ?? Promise.resolve(''),
     getSteamId:         () => window.steam?.getSteamId() ?? Promise.resolve('0'),
+    /** Steam beta branch name, or null / '' when on the default (public) branch */
+    getCurrentBetaName: () => window.steam?.getCurrentBetaName?.() ?? Promise.resolve(null),
     unlockAchievement:  (id) => window.steam?.unlockAchievement(id) ?? Promise.resolve(),
     getUnlockedAchievements: (ids) => window.steam?.getUnlockedAchievements(ids) ?? Promise.resolve([]),
     getStat:            (name) => window.steam?.getStatI32(name) ?? Promise.resolve(0),
@@ -94,3 +96,41 @@ export function openUrl(url) {
     if (window.openUrl) window.openUrl(url);
     else window.open(url, '_blank');
 }
+
+// ── LAN (opt-in: steamElectronBuild.lan === true) ─────────────────────────────
+// Host starts a local PeerServer + UDP announce; guests listRooms() then
+// connect with PeerJS: new Peer(room.peerId, { host: room.host, port: room.port, path: room.path }).
+// Safe no-ops in the browser and when the feature flag is off.
+
+/** @typedef {{
+ *   name: string,
+ *   peerId: string,
+ *   host: string,
+ *   port: number,
+ *   path: string,
+ *   maxPlayers: number | null,
+ *   data: Record<string, unknown>,
+ * }} LanRoom */
+
+export const lan = {
+    /** true when Electron AND steamElectronBuild.lan === true */
+    isAvailable: () => window.electronLan?.isAvailable() ?? Promise.resolve(false),
+    /**
+     * @param {{ name?: string, peerId?: string, port?: number, path?: string, maxPlayers?: number | null, data?: Record<string, unknown> }} [options]
+     * @returns {Promise<LanRoom | null>}
+     */
+    startHost: (options) => window.electronLan?.startHost(options) ?? Promise.resolve(null),
+    stopHost: () => window.electronLan?.stopHost() ?? Promise.resolve(),
+    /**
+     * @param {{ name?: string, peerId?: string, maxPlayers?: number | null, data?: Record<string, unknown> }} [patch]
+     * @returns {Promise<LanRoom | null>}
+     */
+    updateHost: (patch) => window.electronLan?.updateHost(patch) ?? Promise.resolve(null),
+    /**
+     * @param {{ timeoutMs?: number }} [options]
+     * @returns {Promise<LanRoom[]>}
+     */
+    listRooms: (options) => window.electronLan?.listRooms(options) ?? Promise.resolve([]),
+    /** @returns {Promise<LanRoom | null>} */
+    getHostInfo: () => window.electronLan?.getHostInfo() ?? Promise.resolve(null),
+};

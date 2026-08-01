@@ -49,12 +49,38 @@ function loadConfig() {
         iconPath,
         extendPath: fs.existsSync(extendPath) ? extendPath : null,
         hasWebBuild: !!pkg.scripts?.build,
+        // Opt-in LAN PeerServer + UDP discovery (default off — no open ports).
+        lan: c.lan === true,
+        lanDiscoveryPort: c.lanDiscoveryPort,
     };
 }
 
 function fail(msg) {
     console.error(`steam-electron-build: ${msg}`);
     process.exit(1);
+}
+
+/** Copy an npm package and its production dependency tree into destNodeModules. */
+function copyPackageTree(name, destNodeModules, seen = new Set()) {
+    if (seen.has(name)) return;
+    seen.add(name);
+    let pkgJsonPath;
+    try {
+        pkgJsonPath = resolveDep(`${name}/package.json`);
+    } catch {
+        console.warn(`steam-electron-build: optional dep "${name}" not found — skipped`);
+        return;
+    }
+    const from = path.dirname(pkgJsonPath);
+    const to = path.join(destNodeModules, ...name.split('/'));
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.cpSync(from, to, { recursive: true });
+    const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
+    for (const dep of Object.keys(pkg.dependencies ?? {})) {
+        // Skip optional native / peer-only noise that peer lists but we don't need at runtime
+        if (dep.startsWith('@types/')) continue;
+        copyPackageTree(dep, destNodeModules, seen);
+    }
 }
 
 // ── Web build ─────────────────────────────────────────────────────────────────
@@ -113,16 +139,24 @@ async function build(cfg, platform) {
         } catch { /* type-only sub-dep not installed — fine */ }
     }
 
-    const swVersion = require(swPkg).version;
+    const stageDeps = { 'steamworks.js': require(swPkg).version };
+    if (cfg.lan) {
+        // PeerServer + transitive deps (express, ws, …) — only when LAN is opted in
+        copyPackageTree('peer', path.join(stage, 'node_modules'));
+        stageDeps.peer = require(resolveDep('peer/package.json')).version;
+    }
+
     fs.writeFileSync(path.join(stage, 'package.json'), JSON.stringify({
         name: cfg.executableName,
         version: cfg.version,
         main: 'electron/main.cjs',
-        dependencies: { 'steamworks.js': swVersion },
+        dependencies: stageDeps,
         steamElectronBuild: {
             productName: cfg.productName,
             appId: cfg.appId,
             steamAppId: cfg.steamAppId,
+            lan: cfg.lan === true,
+            ...(cfg.lanDiscoveryPort ? { lanDiscoveryPort: cfg.lanDiscoveryPort } : {}),
         },
     }, null, 2));
 

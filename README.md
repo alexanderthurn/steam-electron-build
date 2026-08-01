@@ -90,6 +90,39 @@ browser too, same as the rest of this module — `lobby.isAvailable()` /
 your own web-only matchmaking, like WebRTC + a small backend, when not
 running under Steam).
 
+### LAN (offline PeerJS + room list)
+
+Opt-in local PeerServer + UDP broadcast discovery for LAN parties / offline.
+**Off by default** — set `"lan": true` or the feature never opens ports and
+`lan.isAvailable()` stays false.
+
+```jsonc
+"steamElectronBuild": {
+  "lan": true                 // required to enable
+  // "lanDiscoveryPort": 41234  // optional UDP port (default 41234)
+}
+```
+
+```js
+import { lan } from 'steam-electron-build/native';
+import Peer from 'peerjs';
+
+if (await lan.isAvailable()) {
+  // host
+  const room = await lan.startHost({ name: 'Alice', peerId: 'alice', maxPlayers: 4 });
+  const peer = new Peer(room.peerId, { host: room.host, port: room.port, path: room.path });
+
+  // guest
+  const rooms = await lan.listRooms(); // CS-style LAN list for this appId
+  const join = rooms[0];
+  const guest = new Peer({ host: join.host, port: join.port, path: join.path });
+  guest.connect(join.peerId);
+}
+```
+
+Filtered by your `appId`, so different games on the same LAN don't mix.
+Call `lan.stopHost()` when leaving the lobby (also runs on app quit).
+
 ### Config
 
 All optional, in your `package.json`:
@@ -102,7 +135,9 @@ All optional, in your `package.json`:
   "executableName": "mygame",        // linux binary name
   "dist": "dist",                    // your web build output dir
   "icon": "icon.png",                // 512x512 png (all platform icons derive from it)
-  "extend": "steam-electron-build.extend.cjs"  // optional main-process hook, see below
+  "extend": "steam-electron-build.extend.cjs",  // optional main-process hook, see below
+  "lan": false,                      // opt-in LAN PeerServer + UDP discovery (default false)
+  "lanDiscoveryPort": 41234          // optional; only used when lan is true
 }
 ```
 

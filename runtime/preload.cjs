@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('steam', {
     getUserName:             () => ipcRenderer.invoke('steam:getUserName'),
     getSteamId:              () => ipcRenderer.invoke('steam:getSteamId'),
     getAppId:                () => ipcRenderer.invoke('steam:getAppId'),
+    getCurrentBetaName:      () => ipcRenderer.invoke('steam:getCurrentBetaName'),
     isDev:                   () => ipcRenderer.invoke('steam:isDev'),
     quit:                    () => ipcRenderer.invoke('steam:quit'),
     activateOverlay:         (dialog) => ipcRenderer.invoke('steam:activateOverlay', dialog || 'Friends'),
@@ -65,6 +66,17 @@ contextBridge.exposeInMainWorld('electronStorage', {
 // ── Open URL ──────────────────────────────────────────────────────────────────
 
 contextBridge.exposeInMainWorld('openUrl', (url) => ipcRenderer.invoke('openUrl', url));
+
+// ── LAN (PeerJS signaling host + UDP discovery; no-op unless config.lan) ──────
+
+contextBridge.exposeInMainWorld('electronLan', {
+    isAvailable: () => ipcRenderer.invoke('lan:isAvailable'),
+    startHost:   (options) => ipcRenderer.invoke('lan:startHost', options),
+    stopHost:    () => ipcRenderer.invoke('lan:stopHost'),
+    updateHost:  (patch) => ipcRenderer.invoke('lan:updateHost', patch),
+    listRooms:   (options) => ipcRenderer.invoke('lan:listRooms', options),
+    getHostInfo: () => ipcRenderer.invoke('lan:getHostInfo'),
+});
 
 // ── Key handlers ──────────────────────────────────────────────────────────────
 

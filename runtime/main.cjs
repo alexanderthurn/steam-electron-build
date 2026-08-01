@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, shell, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { createLan } = require('./lan.cjs');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 // dev:      full config passed by the CLI via env (absolute paths)
@@ -9,6 +10,10 @@ const fs = require('fs');
 const cfg = process.env.STEAM_ELECTRON_BUILD_CONFIG
     ? JSON.parse(process.env.STEAM_ELECTRON_BUILD_CONFIG)
     : require(path.join(app.getAppPath(), 'package.json')).steamElectronBuild;
+
+// Opt-in LAN PeerServer + UDP discovery. Default off so games that never
+// call it never open ports or load `peer`.
+const lanEnabled = cfg.lan === true;
 
 const indexHtml = process.env.STEAM_ELECTRON_BUILD_CONFIG
     ? path.join(cfg.distDir, 'index.html')
@@ -188,6 +193,12 @@ function loadExtend() {
     }
 }
 
+const lan = createLan({
+    enabled: lanEnabled,
+    appId: cfg.appId ?? cfg.productName ?? 'game',
+    discoveryPort: cfg.lanDiscoveryPort,
+});
+
 app.whenReady().then(() => {
     if (process.platform === 'darwin' && !app.isPackaged
         && cfg.iconPath && fs.existsSync(cfg.iconPath)) {
@@ -198,6 +209,7 @@ app.whenReady().then(() => {
     createWindow();
 });
 app.on('window-all-closed', () => {
+    void lan.stopHost();
     app.quit();
     // On Linux, Electron leaves crashpad_handler and other subprocesses running,
     // which prevents Steam from detecting the game as exited. Force a clean exit.
@@ -216,6 +228,9 @@ ipcMain.handle('steam:getSteamId', () => {
 
 ipcMain.handle('steam:getAppId', () =>
     steam?.utils.getAppId() ?? 0);
+
+ipcMain.handle('steam:getCurrentBetaName', () =>
+    steam?.apps?.currentBetaName?.() ?? null);
 
 ipcMain.handle('steam:isDev', () =>
     !app.isPackaged);
@@ -395,3 +410,14 @@ ipcMain.handle('win:getCurrentMonitor', () => {
 // ── IPC: Open URL ─────────────────────────────────────────────────────────────
 
 ipcMain.handle('openUrl', (_e, url) => shell.openExternal(url));
+
+// ── IPC: LAN (opt-in PeerServer + UDP room discovery) ─────────────────────────
+// Enabled only when steamElectronBuild.lan === true. Games use PeerJS against
+// the returned host/port/path; this layer does not move game packets.
+
+ipcMain.handle('lan:isAvailable', () => lan.isAvailable());
+ipcMain.handle('lan:startHost', (_e, options) => lan.startHost(options ?? {}));
+ipcMain.handle('lan:stopHost', () => lan.stopHost());
+ipcMain.handle('lan:updateHost', (_e, patch) => lan.updateHost(patch ?? {}));
+ipcMain.handle('lan:listRooms', (_e, options) => lan.listRooms(options ?? {}));
+ipcMain.handle('lan:getHostInfo', () => lan.getHostInfo());

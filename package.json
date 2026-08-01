@@ -31,6 +31,7 @@
   "dependencies": {
     "electron": "^43.0.0",
     "electron-builder": "^26.8.1",
+    "peer": "^1.0.2",
     "steamworks.js": "^0.4.0"
   }
 }
