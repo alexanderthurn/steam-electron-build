@@ -3,3 +3,6 @@ dist/
 dist-electron/
 .steam-electron-build/
 .DS_Store
+steam_appid.txt
+*.zip
+_sdk*_extract/

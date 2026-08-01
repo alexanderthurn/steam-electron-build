@@ -97,16 +97,38 @@ function webBuild(cfg) {
 
 // ── dev: run Electron straight from the package ───────────────────────────────
 
+function resolveSteamSdkDir() {
+    // Prefer the game project's steamworks_sdk, then this package's copy.
+    const candidates = [
+        path.join(PROJECT, 'steamworks_sdk'),
+        path.join(PKG_ROOT, 'steamworks_sdk'),
+    ];
+    for (const p of candidates) {
+        if (fs.existsSync(path.join(p, 'redistributable_bin'))) return p;
+    }
+    return null;
+}
+
 function dev(cfg) {
     webBuild(cfg);
     try {
-        cfg.steamworksPath = path.dirname(resolveDep('steamworks.js/package.json'));
+        cfg.steamFfiPath = path.dirname(resolveDep('steamworks-ffi-node/package.json'));
     } catch { /* runtime will warn that Steam is unavailable */ }
+    cfg.packageRoot = PKG_ROOT;
+    cfg.steamSdkPath = resolveSteamSdkDir();
+    if (!cfg.steamSdkPath) {
+        console.warn('steam-electron-build: no steamworks_sdk/redistributable_bin found — Steam will be disabled');
+        console.warn('  Place Valve\'s redistributable_bin under steamworks_sdk/ (game or package root).');
+    }
     const electron = require(resolveDep('electron')); // resolves to the binary path
+    const env = { ...process.env, STEAM_ELECTRON_BUILD_CONFIG: JSON.stringify(cfg) };
+    // Cursor/CI sometimes set this; if left on, Electron runs the main script as
+    // plain Node and `require('electron').app` is undefined.
+    delete env.ELECTRON_RUN_AS_NODE;
     const res = spawnSync(electron, [path.join(PKG_ROOT, 'runtime', 'main.cjs')], {
         cwd: PROJECT,
         stdio: 'inherit',
-        env: { ...process.env, STEAM_ELECTRON_BUILD_CONFIG: JSON.stringify(cfg) },
+        env,
     });
     process.exit(res.status ?? 0);
 }
@@ -119,7 +141,7 @@ async function build(cfg, platform) {
     }
     webBuild(cfg);
 
-    // Stage a minimal Electron app: game dist + runtime + icon + steamworks.js
+    // Stage a minimal Electron app: game dist + runtime + icon + steamworks-ffi-node
     const stage = path.join(PROJECT, '.steam-electron-build');
     fs.rmSync(stage, { recursive: true, force: true });
     fs.mkdirSync(path.join(stage, 'build'), { recursive: true });
@@ -128,18 +150,17 @@ async function build(cfg, platform) {
     fs.cpSync(cfg.iconPath, path.join(stage, 'build', 'icon.png'));
     if (cfg.extendPath) fs.cpSync(cfg.extendPath, path.join(stage, 'electron', 'extend.cjs'));
 
-    // steamworks.js ships prebuilt binaries — just copy it (and its type-only
-    // deps, which electron-builder wants present to resolve the tree) in
-    const swPkg = resolveDep('steamworks.js/package.json'); // throws if missing
-    fs.cpSync(path.dirname(swPkg), path.join(stage, 'node_modules', 'steamworks.js'), { recursive: true });
-    for (const dep of ['@types/node', 'undici-types']) {
-        try {
-            const from = path.dirname(resolveDep(`${dep}/package.json`));
-            fs.cpSync(from, path.join(stage, 'node_modules', dep), { recursive: true });
-        } catch { /* type-only sub-dep not installed — fine */ }
-    }
+    const ffiPkg = resolveDep('steamworks-ffi-node/package.json'); // throws if missing
+    copyPackageTree('steamworks-ffi-node', path.join(stage, 'node_modules'));
+    // koffi (FFI) + optional native overlay prebuilds travel with the tree above.
 
-    const stageDeps = { 'steamworks.js': require(swPkg).version };
+    const sdkDir = resolveSteamSdkDir();
+    if (!sdkDir) {
+        fail('steamworks_sdk/redistributable_bin required for packaged Steam builds');
+    }
+    fs.cpSync(sdkDir, path.join(stage, 'steamworks_sdk'), { recursive: true });
+
+    const stageDeps = { 'steamworks-ffi-node': require(ffiPkg).version };
     if (cfg.lan) {
         // PeerServer + transitive deps (express, ws, …) — only when LAN is opted in
         copyPackageTree('peer', path.join(stage, 'node_modules'));
@@ -169,6 +190,10 @@ async function build(cfg, platform) {
         win: builder.Platform.WINDOWS,
         linux: builder.Platform.LINUX,
     };
+    const extraResources = [
+        { from: 'steamworks_sdk', to: 'steamworks_sdk' },
+        { from: 'build/icon.png', to: 'icon.png' },
+    ];
     await builder.build({
         targets: targets[platform].createTarget('dir'),
         projectDir: stage,
@@ -177,15 +202,23 @@ async function build(cfg, platform) {
             productName: cfg.productName,
             electronVersion: require(resolveDep('electron/package.json')).version,
             directories: { output: out },
-            files: ['dist/**', 'electron/**'],
-            asarUnpack: ['node_modules/steamworks.js/**'],
+            files: ['dist/**', 'electron/**', 'node_modules/**'],
+            asarUnpack: [
+                'node_modules/steamworks-ffi-node/**',
+                'node_modules/koffi/**',
+            ],
+            extraResources,
             icon: 'build/icon.png',
-            mac: { identity: null },
+            mac: {
+                identity: null,
+                // Needed for Metal overlay mirroring on macOS (ffi-node overlay).
+                entitlements: path.join(PKG_ROOT, 'assets', 'entitlements.mac.plist'),
+                entitlementsInherit: path.join(PKG_ROOT, 'assets', 'entitlements.mac.plist'),
+            },
             win: { target: 'dir' },
             linux: {
                 target: 'dir',
                 executableName: cfg.executableName,
-                extraResources: [{ from: 'build/icon.png', to: 'icon.png' }],
             },
         },
     });

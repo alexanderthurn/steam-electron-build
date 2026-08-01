@@ -23,18 +23,36 @@ app.setName(cfg.productName);
 // Deterministic save location (same in dev and packaged builds)
 app.setPath('userData', path.join(app.getPath('appData'), cfg.appId));
 
+// ── Resolve Steamworks SDK redistributables ───────────────────────────────────
+// steamworks-ffi-node cannot legally ship libsteam_api; we stage Valve's
+// redistributable_bin under steamworks_sdk/ (package root in dev, next to
+// resources in packaged builds).
+
+function resolveSteamSdkPath() {
+    const candidates = [];
+    if (cfg.steamSdkPath) candidates.push(cfg.steamSdkPath);
+    if (app.isPackaged) {
+        candidates.push(path.join(process.resourcesPath, 'steamworks_sdk'));
+        candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'steamworks_sdk'));
+    } else {
+        if (cfg.packageRoot) candidates.push(path.join(cfg.packageRoot, 'steamworks_sdk'));
+        candidates.push(path.join(__dirname, '..', 'steamworks_sdk'));
+        candidates.push(path.join(process.cwd(), 'steamworks_sdk'));
+    }
+    for (const p of candidates) {
+        if (p && fs.existsSync(path.join(p, 'redistributable_bin'))) return p;
+    }
+    return null;
+}
+
 // ── Linux: fix library search path before any native modules load ─────────────
-// Steam sets LD_LIBRARY_PATH to its own dirs, which contain an older
-// libsteam_api.so that may be missing symbols steamworks.js requires.
-// glibc re-reads LD_LIBRARY_PATH on each dlopen(), so prepending here (before
-// require('steamworks.js') below) ensures the bundled version wins.
 if (process.platform === 'linux') {
     const dirs = [];
+    const sdk = resolveSteamSdkPath();
+    if (sdk) dirs.push(path.join(sdk, 'redistributable_bin', 'linux64'));
     if (app.isPackaged) {
         dirs.push(path.join(process.resourcesPath, 'app.asar.unpacked',
-            'node_modules', 'steamworks.js', 'dist', 'linux64'));
-    } else if (cfg.steamworksPath) {
-        dirs.push(path.join(cfg.steamworksPath, 'dist', 'linux64'));
+            'node_modules', 'steamworks-ffi-node', 'prebuilds', 'linux-x64'));
     }
     dirs.push(path.dirname(process.execPath));
     if (process.env.LD_LIBRARY_PATH) dirs.push(process.env.LD_LIBRARY_PATH);
@@ -44,89 +62,318 @@ if (process.platform === 'linux') {
     app.commandLine.appendSwitch('no-sandbox');
     app.commandLine.appendSwitch('disable-gpu-sandbox');
     app.commandLine.appendSwitch('in-process-gpu');
-    app.commandLine.appendSwitch('disable-dev-shm-usage'); // use /tmp instead of /dev/shm
-    app.commandLine.appendSwitch('no-zygote');             // prevents ESRCH zygote failures
+    app.commandLine.appendSwitch('disable-dev-shm-usage');
+    app.commandLine.appendSwitch('no-zygote');
 }
 
 // ── Steam ─────────────────────────────────────────────────────────────────────
 
-let steam = null;  // steamworks.js client
-let sw    = null;  // steamworks.js module
+let SteamworksSDK = null; // module
+let steam = null;         // SteamworksSDK instance after init
 
 function initSteam() {
     try {
-        // dev: absolute path resolved by the CLI; packaged: staged node_modules
-        sw = require(cfg.steamworksPath ?? 'steamworks.js');
+        SteamworksSDK = require(cfg.steamFfiPath ?? 'steamworks-ffi-node');
     } catch (e) {
         console.warn('[Steam] Load failed:', e.message);
         return;
     }
 
-    // Overlay hook is non-critical — never let it block Steam init.
-    // On Linux the Steam overlay is injected by Steam itself; this call
-    // only matters on Windows/Mac and may throw in some packaged environments.
-    try {
-        sw.electronEnableSteamOverlay();
-    } catch (e) {
-        console.warn('[Steam] Overlay hook failed (non-fatal):', e.message);
+    const sdkPath = resolveSteamSdkPath();
+    if (!sdkPath) {
+        console.warn('[Steam] steamworks_sdk/redistributable_bin not found — Steam disabled');
+        return;
     }
 
     try {
-        steam = sw.init(cfg.steamAppId);
-        console.log('[Steam] Initialized:', steam.localplayer.getName());
+        const SteamClass = SteamworksSDK.SteamworksSDK || SteamworksSDK.default || SteamworksSDK;
+        steam = SteamClass.getInstance();
+
+        if (typeof steam.setSdkPath === 'function') {
+            steam.setSdkPath(sdkPath);
+        }
+
+        const ok = steam.init({ appId: Number(cfg.steamAppId) || 480 });
+        if (!ok) {
+            console.warn('[Steam] Init returned false');
+            steam = null;
+            return;
+        }
+        const status = steam.getStatus?.() ?? {};
+        console.log('[Steam] Initialized:', steam.friends?.getPersonaName?.() ?? status.steamId ?? 'ok');
         initNetworking();
+        startSteamPumps();
+        emitConnectLobbyFromArgv();
     } catch (e) {
         console.warn('[Steam] Init failed:', e.message);
+        steam = null;
     }
 }
 
-// ── Networking (lobbies + P2P) ─────────────────────────────────────────────────
-// Only ever called right after a successful sw.init() above — everything
-// here assumes `steam` is set.
+// ── Networking (lobbies + Networking Sockets) ─────────────────────────────────
 
-let currentLobby = null;  // steamworks.js Lobby handle — held here so IPC
-                           // calls (stateless request/response) have
-                           // something to call .send()/.getMembers() etc. on
-let p2pPumpTimer = null;
+let currentLobbyId = null; // string steam id
+let listenSocket = null;
+let pollGroup = null;
+/** @type {Map<string, number>} steamId64 -> connection handle */
+const connBySteamId = new Map();
+/** @type {Map<number, string>} connection handle -> steamId64 */
+const steamIdByConn = new Map();
+/** @type {Map<string, object[]>} queued payloads until Connected */
+const pendingBySteamId = new Map();
+/** @type {Set<string>} last known lobby members for join/leave diffs */
+let lastLobbyMembers = new Set();
+let steamPumpTimer = null;
+
+function steamEnums() {
+    try {
+        return require(cfg.steamFfiPath ?? 'steamworks-ffi-node');
+    } catch {
+        return {};
+    }
+}
+
+const LOBBY_TYPE = { private: 0, public: 2 }; // ELobbyType Private=0 Public=2
+const CONN_CONNECTED = 3;
+const CONN_CLOSED_BY_PEER = 5;
+const CONN_PROBLEM = 6;
+const ERESULT_OK = 1;
 
 function initNetworking() {
-    // Auto-accept every P2P session: this is aimed at "play with a friend"
-    // games, not an adversarial ladder — no handshake/allowlist needed, and
-    // without this Steam silently drops packets from a session it hasn't
-    // been told to accept.
-    steam.callback.register(steam.callback.SteamCallback.P2PSessionRequest, ({ remote }) => {
-        steam.networking.acceptP2PSession(remote);
-    });
-    steam.callback.register(steam.callback.SteamCallback.LobbyChatUpdate, (data) => {
-        safeSend('steam:lobbyChatUpdate', {
-            lobby: String(data.lobby),
-            userChanged: String(data.user_changed),
-            memberStateChange: data.member_state_change,
-        });
-    });
-    // Fires when the user accepts a Steam overlay/friends-list "Join Game"
-    // invite — may happen before the game has created or joined any lobby
-    // itself, so this is registered unconditionally at init time, not
-    // scoped to an active lobby.
-    steam.callback.register(steam.callback.SteamCallback.GameLobbyJoinRequested, (data) => {
-        safeSend('steam:lobbyJoinRequested', { lobbySteamId: String(data.lobby_steam_id) });
+    if (!steam?.networkingSockets) return;
+
+    try {
+        pollGroup = steam.networkingSockets.createPollGroup();
+    } catch (e) {
+        console.warn('[Steam] createPollGroup failed:', e.message);
+    }
+
+    steam.networkingSockets.onConnectionRequest((request) => {
+        try {
+            const result = steam.networkingSockets.acceptConnection(request.connection);
+            if (result !== ERESULT_OK) {
+                console.warn('[Steam] acceptConnection failed:', result);
+                return;
+            }
+            rememberConnection(request.connection, normalizeSteamId(request.identityRemote));
+        } catch (e) {
+            console.warn('[Steam] Connection request handler failed:', e.message);
+        }
     });
 
-    // isP2PPacketAvailable/readP2PPacket are pull-based (unlike the push
-    // callbacks above) — drain them on a timer. ~60Hz matches the cost of a
-    // typical game loop tick and keeps relay latency low without busy-looping.
-    p2pPumpTimer = setInterval(() => {
-        let size;
-        while ((size = steam.networking.isP2PPacketAvailable()) > 0) {
-            const pkt = steam.networking.readP2PPacket(size);
-            let data;
-            try {
-                data = JSON.parse(pkt.data.toString('utf8'));
-            } catch {
-                continue; // malformed/foreign packet — drop rather than crash the pump
+    steam.networkingSockets.onConnectionStateChange((change) => {
+        const steamId = normalizeSteamId(change.identityRemote)
+            || steamIdByConn.get(change.connection)
+            || null;
+        if (change.newState === CONN_CONNECTED) {
+            if (steamId) {
+                rememberConnection(change.connection, steamId);
+                flushPending(steamId);
             }
-            safeSend('steam:p2pData', { steamId64: String(pkt.steamId.steamId64), data });
+        } else if (
+            change.newState === CONN_CLOSED_BY_PEER
+            || change.newState === CONN_PROBLEM
+        ) {
+            forgetConnection(change.connection);
         }
+    });
+}
+
+function normalizeSteamId(identity) {
+    if (identity == null) return null;
+    const s = String(identity);
+    const m = s.match(/(\d{17,})/);
+    return m ? m[1] : (s && s !== '0' ? s : null);
+}
+
+function rememberConnection(connection, steamId64) {
+    if (!connection || connection === (k_HSteamNetConnection_Invalid ?? 0) || !steamId64) return;
+    connBySteamId.set(steamId64, connection);
+    steamIdByConn.set(connection, steamId64);
+    if (pollGroup != null) {
+        try { steam.networkingSockets.setConnectionPollGroup(connection, pollGroup); } catch { /* ignore */ }
+    }
+}
+
+function forgetConnection(connection) {
+    const steamId = steamIdByConn.get(connection);
+    steamIdByConn.delete(connection);
+    if (steamId && connBySteamId.get(steamId) === connection) connBySteamId.delete(steamId);
+}
+
+function ensureListenSocket() {
+    if (!steam?.networkingSockets || listenSocket != null) return;
+    try {
+        const sock = steam.networkingSockets.createListenSocketP2P(0);
+        if (!sock) {
+            console.warn('[Steam] createListenSocketP2P failed');
+            return;
+        }
+        listenSocket = sock;
+    } catch (e) {
+        console.warn('[Steam] listen socket error:', e.message);
+    }
+}
+
+function ensureConnection(steamId64) {
+    if (!steam?.networkingSockets || !steamId64) return null;
+    const existing = connBySteamId.get(steamId64);
+    if (existing != null && steam.networkingSockets.isConnectionActive?.(existing) !== false) {
+        return existing;
+    }
+    try {
+        const conn = steam.networkingSockets.connectP2P(steamId64, 0);
+        if (!conn) return null;
+        rememberConnection(conn, steamId64);
+        return conn;
+    } catch (e) {
+        console.warn('[Steam] connectP2P failed:', e.message);
+        return null;
+    }
+}
+
+function flushPending(steamId64) {
+    const q = pendingBySteamId.get(steamId64);
+    if (!q?.length) return;
+    pendingBySteamId.delete(steamId64);
+    for (const payload of q) sendOnConnection(steamId64, payload);
+}
+
+function sendOnConnection(steamId64, payload) {
+    const conn = connBySteamId.get(steamId64);
+    if (conn == null) return false;
+    const info = steam.networkingSockets.getConnectionInfo?.(conn);
+    const connected = !info || info.state === CONN_CONNECTED;
+    if (!connected) {
+        const q = pendingBySteamId.get(steamId64) ?? [];
+        q.push(payload);
+        pendingBySteamId.set(steamId64, q);
+        return true; // accepted into queue
+    }
+    try {
+        const result = steam.networkingSockets.sendReliable(conn, Buffer.from(JSON.stringify(payload), 'utf8'));
+        return !!(result && result.success);
+    } catch (e) {
+        console.warn('[Steam] sendReliable failed:', e.message);
+        return false;
+    }
+}
+
+function closeNetworking() {
+    pendingBySteamId.clear();
+    connBySteamId.clear();
+    steamIdByConn.clear();
+    if (steam?.networkingSockets) {
+        try { steam.networkingSockets.closeAll(); } catch { /* ignore */ }
+    }
+    listenSocket = null;
+    // poll group is destroyed by closeAll; recreate on next lobby
+    pollGroup = null;
+    try {
+        if (steam?.networkingSockets) pollGroup = steam.networkingSockets.createPollGroup();
+    } catch { /* ignore */ }
+}
+
+function describeLobby(lobbyId) {
+    const mm = steam.matchmaking;
+    const limit = mm.getLobbyMemberLimit(lobbyId);
+    return {
+        id: String(lobbyId),
+        memberCount: Number(mm.getNumLobbyMembers(lobbyId)),
+        memberLimit: limit === 0 || limit == null ? null : Number(limit),
+        owner: String(mm.getLobbyOwner(lobbyId)),
+        data: mm.getAllLobbyData(lobbyId) ?? {},
+    };
+}
+
+function afterLobbyReady(lobbyId) {
+    currentLobbyId = String(lobbyId);
+    lastLobbyMembers = new Set(steam.matchmaking.getLobbyMembers(lobbyId).map(String));
+    ensureListenSocket();
+    const owner = String(steam.matchmaking.getLobbyOwner(lobbyId));
+    const self = String(steam.getStatus?.().steamId ?? '');
+    if (owner && self && owner !== self) ensureConnection(owner);
+}
+
+function emitConnectLobbyFromArgv() {
+    // Steam launches with `+connect_lobby <id>` when the user accepts a
+    // Join Game invite that starts the app. ffi-node does not yet expose
+    // GameLobbyJoinRequested for already-running instances.
+    const args = process.argv;
+    for (let i = 0; i < args.length; i++) {
+        if (args[i] === '+connect_lobby' && args[i + 1]) {
+            const lobbySteamId = String(args[i + 1]);
+            // Defer until the window exists so the renderer can subscribe.
+            setTimeout(() => safeSend('steam:lobbyJoinRequested', { lobbySteamId }), 500);
+            return;
+        }
+        const m = String(args[i]).match(/^\+connect_lobby[=:]?(\d+)/);
+        if (m) {
+            setTimeout(() => safeSend('steam:lobbyJoinRequested', { lobbySteamId: m[1] }), 500);
+            return;
+        }
+    }
+}
+
+function startSteamPumps() {
+    if (steamPumpTimer) return;
+    steamPumpTimer = setInterval(() => {
+        if (!steam) return;
+        try { steam.runCallbacks(); } catch { /* ignore */ }
+        try { steam.networkingSockets?.runCallbacks?.(); } catch { /* ignore */ }
+
+        // Lobby member join/leave (ffi-node has no LobbyChatUpdate push callback)
+        if (currentLobbyId) {
+            try {
+                const members = steam.matchmaking.getLobbyMembers(currentLobbyId).map(String);
+                const now = new Set(members);
+                for (const id of now) {
+                    if (!lastLobbyMembers.has(id)) {
+                        safeSend('steam:lobbyChatUpdate', {
+                            lobby: currentLobbyId,
+                            userChanged: id,
+                            memberStateChange: 1, // Entered
+                        });
+                        // Non-owners: ensure a socket to the lobby owner.
+                        const owner = String(steam.matchmaking.getLobbyOwner(currentLobbyId));
+                        const self = String(steam.getStatus?.().steamId ?? '');
+                        if (owner && self && owner !== self) ensureConnection(owner);
+                    }
+                }
+                for (const id of lastLobbyMembers) {
+                    if (!now.has(id)) {
+                        safeSend('steam:lobbyChatUpdate', {
+                            lobby: currentLobbyId,
+                            userChanged: id,
+                            memberStateChange: 2, // Left
+                        });
+                    }
+                }
+                lastLobbyMembers = now;
+            } catch { /* ignore */ }
+        }
+
+        // Drain Networking Sockets messages
+        try {
+            const ns = steam.networkingSockets;
+            if (!ns) return;
+            const messages = pollGroup != null
+                ? ns.receiveMessagesOnPollGroup(pollGroup, 32)
+                : ns.getActiveConnections().flatMap((c) => ns.receiveMessages(c, 16));
+            for (const msg of messages) {
+                const steamId64 = steamIdByConn.get(msg.connection)
+                    || normalizeSteamId(msg.identityPeer)
+                    || null;
+                if (!steamId64) continue;
+                let data;
+                try {
+                    data = JSON.parse(Buffer.from(msg.data).toString('utf8'));
+                } catch {
+                    continue;
+                }
+                safeSend('steam:p2pData', { steamId64, data });
+            }
+        } catch { /* ignore */ }
     }, 16);
 }
 
@@ -142,16 +389,11 @@ function getSavePath() {
 
 let mainWin = null;
 
-// module-scope (not just createWindow-local) — networking callbacks below
-// fire from Steam's own event pump, not from a window event, and still need
-// a safe way to reach the renderer.
 function safeSend(channel, data) {
     if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send(channel, data);
 }
 
 function createWindow() {
-    // Packaged mac/win builds get their icon from the bundle/exe; this path
-    // only exists in dev and in packaged Linux builds (extraResources).
     const iconPath = app.isPackaged
         ? path.join(process.resourcesPath, 'icon.png')
         : cfg.iconPath;
@@ -159,6 +401,12 @@ function createWindow() {
         width: 1280,
         height: 720,
         center: true,
+        frame: true,
+        resizable: true,
+        minimizable: true,
+        maximizable: true,
+        closable: true,
+        title: cfg.productName || 'Game',
         icon: iconPath && fs.existsSync(iconPath) ? iconPath : undefined,
         webPreferences: {
             preload: path.join(__dirname, 'preload.cjs'),
@@ -166,7 +414,9 @@ function createWindow() {
             nodeIntegration: false,
         },
     });
+    // Keep the native title bar / traffic lights; only drop the app menu bar.
     mainWin.removeMenu();
+    mainWin.setMenuBarVisibility(false);
 
     mainWin.loadFile(indexHtml);
 
@@ -175,7 +425,6 @@ function createWindow() {
     mainWin.on('closed', () => { mainWin = null; });
 }
 
-// Optional per-game main-process hook (steam-electron-build.extend.cjs in the game repo)
 function loadExtend() {
     const extendPath = app.isPackaged
         ? path.join(app.getAppPath(), 'electron', 'extend.cjs')
@@ -210,32 +459,49 @@ app.whenReady().then(() => {
 });
 app.on('window-all-closed', () => {
     void lan.stopHost();
+    if (steamPumpTimer) clearInterval(steamPumpTimer);
+    closeNetworking();
+    try { steam?.shutdown?.(); } catch { /* ignore */ }
     app.quit();
-    // On Linux, Electron leaves crashpad_handler and other subprocesses running,
-    // which prevents Steam from detecting the game as exited. Force a clean exit.
     if (process.platform === 'linux') setTimeout(() => process.exit(0), 300);
 });
 
 // ── IPC: Steam ────────────────────────────────────────────────────────────────
 
 ipcMain.handle('steam:getUserName', () =>
-    steam?.localplayer.getName() ?? '');
+    steam?.friends?.getPersonaName?.() ?? '');
 
-ipcMain.handle('steam:getSteamId', () => {
-    const id = steam?.localplayer.getSteamId();
-    return id ? String(id.steamId64 ?? id) : '0';
-});
+ipcMain.handle('steam:getSteamId', () =>
+    String(steam?.getStatus?.().steamId ?? '0'));
 
-/**
- * Steamworks.js has no avatar API — pull the public community large avatar
- * (184×184) for the local user and return a data URL for offline caching.
- */
 ipcMain.handle('steam:getAvatarDataUrl', async () => {
     if (!steam) return null;
     try {
-        const id = steam.localplayer.getSteamId();
-        const steamId64 = String(id?.steamId64 ?? id ?? '');
+        const steamId64 = String(steam.getStatus?.().steamId ?? '');
         if (!steamId64 || steamId64 === '0') return null;
+
+        // Prefer native Steam image cache (no network). Avatar may need a
+        // few frames to load into the cache after the first request.
+        let handle = 0;
+        for (let i = 0; i < 20; i++) {
+            handle = steam.friends.getLargeFriendAvatar(steamId64)
+                || steam.friends.getMediumFriendAvatar(steamId64)
+                || 0;
+            if (handle > 0) break;
+            steam.runCallbacks();
+            await new Promise((r) => setTimeout(r, 50));
+        }
+        if (handle > 0) {
+            const rgba = steam.utils.getImageRGBA(handle);
+            if (rgba?.data?.length) {
+                // Encode raw RGBA as an uncompressed BMP-ish PNG via a tiny data URL
+                // using Electron-available canvas is unavailable in main — fall through
+                // to community CDN if we cannot PNG-encode. Use a minimal PNG encoder:
+                return rgbaToPngDataUrl(rgba.width, rgba.height, rgba.data) ?? null;
+            }
+        }
+
+        // Fallback: public community avatar (same as former steamworks.js path).
         const xmlRes = await fetch(`https://steamcommunity.com/profiles/${steamId64}/?xml=1`);
         if (!xmlRes.ok) return null;
         const xml = await xmlRes.text();
@@ -258,11 +524,61 @@ ipcMain.handle('steam:getAvatarDataUrl', async () => {
     }
 });
 
-ipcMain.handle('steam:getAppId', () =>
-    steam?.utils.getAppId() ?? 0);
+/** Minimal uncompressed PNG encoder for Steam RGBA avatars (no deps). */
+function rgbaToPngDataUrl(width, height, rgba) {
+    try {
+        const { deflateSync } = require('zlib');
+        const raw = Buffer.alloc((width * 4 + 1) * height);
+        for (let y = 0; y < height; y++) {
+            raw[y * (width * 4 + 1)] = 0; // filter none
+            rgba.copy(raw, y * (width * 4 + 1) + 1, y * width * 4, (y + 1) * width * 4);
+        }
+        const compressed = deflateSync(raw);
+        const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+        const ihdr = Buffer.alloc(13);
+        ihdr.writeUInt32BE(width, 0);
+        ihdr.writeUInt32BE(height, 4);
+        ihdr[8] = 8; ihdr[9] = 6; // 8-bit RGBA
+        const crcTable = (() => {
+            const t = new Uint32Array(256);
+            for (let n = 0; n < 256; n++) {
+                let c = n;
+                for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+                t[n] = c;
+            }
+            return t;
+        })();
+        const crc = (buf) => {
+            let c = 0xffffffff;
+            for (let i = 0; i < buf.length; i++) c = crcTable[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+            return (c ^ 0xffffffff) >>> 0;
+        };
+        const chunk = (type, data) => {
+            const len = Buffer.alloc(4); len.writeUInt32BE(data.length, 0);
+            const typeB = Buffer.from(type);
+            const crcB = Buffer.alloc(4);
+            crcB.writeUInt32BE(crc(Buffer.concat([typeB, data])), 0);
+            return Buffer.concat([len, typeB, data, crcB]);
+        };
+        const png = Buffer.concat([
+            signature,
+            chunk('IHDR', ihdr),
+            chunk('IDAT', compressed),
+            chunk('IEND', Buffer.alloc(0)),
+        ]);
+        return `data:image/png;base64,${png.toString('base64')}`;
+    } catch {
+        return null;
+    }
+}
 
-ipcMain.handle('steam:getCurrentBetaName', () =>
-    steam?.apps?.currentBetaName?.() ?? null);
+ipcMain.handle('steam:getAppId', () =>
+    steam?.utils?.getAppID?.() ?? steam?.getStatus?.().appId ?? 0);
+
+ipcMain.handle('steam:getCurrentBetaName', () => {
+    const name = steam?.apps?.getCurrentBetaName?.();
+    return name && String(name).trim() ? String(name) : null;
+});
 
 ipcMain.handle('steam:isDev', () =>
     !app.isPackaged);
@@ -272,130 +588,153 @@ ipcMain.handle('steam:quit', () =>
 
 ipcMain.handle('steam:activateOverlay', (_e, dialog) => {
     if (!steam) return;
-    const dlg = steam.overlay.Dialog[dialog] ?? steam.overlay.Dialog.Friends;
-    steam.overlay.activateDialog(dlg);
+    try {
+        steam.overlay.activateGameOverlay(dialog || 'Friends');
+    } catch (e) {
+        console.warn('[Steam] activateOverlay failed:', e.message);
+    }
 });
 
 ipcMain.handle('steam:openStore', () => {
     if (!steam) return;
-    const flag = steam.overlay.StoreFlag?.None ?? 0;
-    steam.overlay.activateToStore(steam.utils.getAppId(), flag);
+    try {
+        const appId = steam.utils.getAppID();
+        steam.overlay.activateGameOverlayToStore(appId, 0);
+    } catch (e) {
+        console.warn('[Steam] openStore failed:', e.message);
+    }
 });
 
-ipcMain.handle('steam:unlockAchievement', (_e, id) => {
+ipcMain.handle('steam:unlockAchievement', async (_e, id) => {
     if (!steam) return;
-    steam.achievement.activate(id);
-    steam.stats.store();
+    await steam.achievements.unlockAchievement(id);
 });
 
-ipcMain.handle('steam:getUnlockedAchievements', (_e, ids) => {
+ipcMain.handle('steam:getUnlockedAchievements', async (_e, ids) => {
     if (!steam) return [];
-    return ids.filter(id => steam.achievement.isActivated(id));
+    const out = [];
+    for (const id of ids) {
+        if (await steam.achievements.isAchievementUnlocked(id)) out.push(id);
+    }
+    return out;
 });
 
-ipcMain.handle('steam:getStatI32', (_e, name) =>
-    steam?.stats.getInt(name) ?? 0);
+ipcMain.handle('steam:getStatI32', async (_e, name) => {
+    if (!steam) return 0;
+    const stat = await steam.stats.getStatInt(name);
+    return stat?.value ?? 0;
+});
 
-ipcMain.handle('steam:setStat', (_e, name, value) => {
+ipcMain.handle('steam:setStat', async (_e, name, value) => {
     if (!steam) return;
-    steam.stats.setInt(name, value);
-    steam.stats.store();
+    await steam.stats.setStatInt(name, value);
 });
 
-ipcMain.handle('steam:clearAchievement', (_e, id) => {
+ipcMain.handle('steam:clearAchievement', async (_e, id) => {
     if (!steam) return;
-    steam.achievement.clear(id);
-    steam.stats.store();
+    await steam.achievements.clearAchievement(id);
 });
 
-ipcMain.handle('steam:resetAllStats', (_e, achievementsToo) => {
-    if (!steam || !sw) return false;
-    const ok = sw.stats.resetAll(!!achievementsToo);
-    if (ok) steam.stats.store();
-    return ok;
+ipcMain.handle('steam:resetAllStats', async (_e, achievementsToo) => {
+    if (!steam) return false;
+    return !!(await steam.achievements.resetAllStats(!!achievementsToo));
 });
 
 // ── IPC: Lobbies ──────────────────────────────────────────────────────────────
-// `type`: 'private' (invite-only, not returned by getLobbies — for a direct
-// friend invite) or 'public' (discoverable — for anonymous quick-match).
-// bigint (lobby/steam ids) never crosses IPC directly — always String() out,
-// BigInt(...) back in at the steamworks.js call site, since contextBridge's
-// structured-clone support for bigint isn't a documented guarantee.
-
-const LOBBY_TYPES = { private: 0 /* Private */, public: 2 /* Public */ };
-
-function describeLobby(lobby) {
-    const limit = lobby.getMemberLimit();
-    return {
-        id: String(lobby.id),
-        memberCount: Number(lobby.getMemberCount()),
-        memberLimit: limit === null ? null : Number(limit),
-        owner: String(lobby.getOwner().steamId64),
-        data: lobby.getFullData(),
-    };
-}
 
 ipcMain.handle('steam:lobbyCreate', async (_e, type, maxMembers) => {
     if (!steam) return null;
-    currentLobby = await steam.matchmaking.createLobby(LOBBY_TYPES[type] ?? LOBBY_TYPES.private, maxMembers);
-    return describeLobby(currentLobby);
+    const result = await steam.matchmaking.createLobby(
+        LOBBY_TYPE[type] ?? LOBBY_TYPE.private,
+        maxMembers,
+    );
+    if (!result?.success || !result.lobbyId) {
+        console.warn('[Steam] lobbyCreate failed:', result?.error);
+        return null;
+    }
+    afterLobbyReady(result.lobbyId);
+    return describeLobby(result.lobbyId);
 });
 
 ipcMain.handle('steam:lobbyJoin', async (_e, lobbyIdStr) => {
     if (!steam) return null;
-    currentLobby = await steam.matchmaking.joinLobby(BigInt(lobbyIdStr));
-    return describeLobby(currentLobby);
+    const result = await steam.matchmaking.joinLobby(String(lobbyIdStr));
+    if (!result?.success || !result.lobbyId) {
+        console.warn('[Steam] lobbyJoin failed:', result?.error ?? result?.response);
+        return null;
+    }
+    afterLobbyReady(result.lobbyId);
+    return describeLobby(result.lobbyId);
 });
 
 ipcMain.handle('steam:lobbyLeave', () => {
-    currentLobby?.leave();
-    currentLobby = null;
+    if (steam && currentLobbyId) {
+        try { steam.matchmaking.leaveLobby(currentLobbyId); } catch { /* ignore */ }
+    }
+    currentLobbyId = null;
+    lastLobbyMembers = new Set();
+    closeNetworking();
 });
 
 ipcMain.handle('steam:lobbyGetMembers', () =>
-    currentLobby ? currentLobby.getMembers().map((m) => String(m.steamId64)) : []);
+    currentLobbyId ? steam.matchmaking.getLobbyMembers(currentLobbyId).map(String) : []);
 
 ipcMain.handle('steam:lobbyGetOwner', () =>
-    currentLobby ? String(currentLobby.getOwner().steamId64) : null);
+    currentLobbyId ? String(steam.matchmaking.getLobbyOwner(currentLobbyId)) : null);
 
 ipcMain.handle('steam:lobbySetData', (_e, key, value) =>
-    currentLobby?.setData(key, value) ?? false);
+    currentLobbyId ? steam.matchmaking.setLobbyData(currentLobbyId, key, value) : false);
 
 ipcMain.handle('steam:lobbyGetData', (_e, key) =>
-    currentLobby?.getData(key) ?? null);
+    currentLobbyId ? (steam.matchmaking.getLobbyData(currentLobbyId, key) || null) : null);
 
 ipcMain.handle('steam:lobbyGetFullData', () =>
-    currentLobby?.getFullData() ?? {});
+    currentLobbyId ? (steam.matchmaking.getAllLobbyData(currentLobbyId) ?? {}) : {});
 
-ipcMain.handle('steam:lobbyMergeFullData', (_e, data) =>
-    currentLobby?.mergeFullData(data) ?? false);
+ipcMain.handle('steam:lobbyMergeFullData', (_e, data) => {
+    if (!currentLobbyId || !data) return false;
+    let ok = true;
+    for (const [k, v] of Object.entries(data)) {
+        if (!steam.matchmaking.setLobbyData(currentLobbyId, k, String(v))) ok = false;
+    }
+    return ok;
+});
 
 ipcMain.handle('steam:lobbySetJoinable', (_e, flag) =>
-    currentLobby?.setJoinable(flag) ?? false);
+    currentLobbyId ? steam.matchmaking.setLobbyJoinable(currentLobbyId, !!flag) : false);
 
 ipcMain.handle('steam:lobbyOpenInviteDialog', () => {
-    currentLobby?.openInviteDialog();
+    if (!steam || !currentLobbyId) return;
+    try {
+        steam.overlay.activateGameOverlayInviteDialog(currentLobbyId);
+    } catch (e) {
+        console.warn('[Steam] openInviteDialog failed:', e.message);
+    }
 });
 
 ipcMain.handle('steam:lobbyGetLobbies', async () => {
     if (!steam) return [];
-    const lobbies = await steam.matchmaking.getLobbies();
-    return lobbies.map(describeLobby);
+    try {
+        const { ELobbyDistanceFilter } = steamEnums();
+        steam.matchmaking.addRequestLobbyListDistanceFilter(
+            ELobbyDistanceFilter?.Worldwide ?? 3,
+        );
+        steam.matchmaking.addRequestLobbyListResultCountFilter(50);
+    } catch { /* optional filters */ }
+    const result = await steam.matchmaking.requestLobbyList();
+    if (!result?.success) return [];
+    return (result.lobbies ?? []).map((id) => describeLobby(id));
 });
 
-// ── IPC: P2P networking ───────────────────────────────────────────────────────
-// Payloads are arbitrary JSON-serializable game messages — this layer only
-// moves bytes, it has no opinion on what's inside (mirrors how NetSession's
-// PeerJS DataConnection is used on the web build).
-//
-// SendType is a TS `const enum` in steamworks.js — erased at compile time,
-// never exported as a runtime object — so the raw value is used directly.
-const SEND_TYPE_RELIABLE = 2;
+// ── IPC: P2P networking (ISteamNetworkingSockets) ─────────────────────────────
 
 ipcMain.handle('steam:netSend', (_e, steamId64Str, payload) => {
     if (!steam) return false;
-    const buf = Buffer.from(JSON.stringify(payload), 'utf8');
-    return steam.networking.sendP2PPacket(BigInt(steamId64Str), SEND_TYPE_RELIABLE, buf);
+    const steamId64 = String(steamId64Str);
+    ensureListenSocket();
+    const conn = ensureConnection(steamId64);
+    if (conn == null) return false;
+    return sendOnConnection(steamId64, payload);
 });
 
 // ── IPC: Storage ──────────────────────────────────────────────────────────────
@@ -443,9 +782,7 @@ ipcMain.handle('win:getCurrentMonitor', () => {
 
 ipcMain.handle('openUrl', (_e, url) => shell.openExternal(url));
 
-// ── IPC: LAN (opt-in PeerServer + UDP room discovery) ─────────────────────────
-// Enabled only when steamElectronBuild.lan === true. Games use PeerJS against
-// the returned host/port/path; this layer does not move game packets.
+// ── IPC: LAN ──────────────────────────────────────────────────────────────────
 
 ipcMain.handle('lan:isAvailable', () => lan.isAvailable());
 ipcMain.handle('lan:startHost', (_e, options) => lan.startHost(options ?? {}));

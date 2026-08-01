@@ -8,11 +8,16 @@ npx steam-electron-build dev          # your game in Electron, with real Steam
 npx steam-electron-build win          # depot-ready folder in dist-electron/win  (mac | win | linux)
 ```
 
-No config needed to start: it defaults to Steam's public test app **480 (Spacewar)**, so Steam integration works on any machine with the Steam client running — no Steamworks account, no SDK download (`steamworks.js` bundles the redistributables).
+No config needed to start: it defaults to Steam's public test app **480 (Spacewar)**, so Steam integration works on any machine with the Steam client running — no Steamworks partner account required for testing.
+
+Steamworks redistributables (`libsteam_api` / `steam_api64.dll`) live under `steamworks_sdk/redistributable_bin/` in this package (or your game root). Valve's license forbids npm packages from shipping those binaries as a public dependency; game/tool repos that already hold a Steamworks license can keep a local copy (as we do).
+
+Uses **[steamworks-ffi-node](https://github.com/ArtyProf/steamworks-ffi-node)** (Steamworks SDK **1.64** redistributables) for lobbies, achievements/stats, and modern **ISteamNetworkingSockets** P2P.
+
+Steam Overlay Shift+Tab is **not** wired via the experimental Electron Metal/GL content-mirror (it opens a second window and fails on macOS). `activateOverlay()` still calls the Steam overlay API; injection into Electron remains a known Chromium limitation.
 
 Extracted from a shipped Steam game ([DICEPTION](https://store.steampowered.com/app/3689240/)), so the annoying parts are already solved:
 
-- **Steam overlay** (Shift+Tab), including the manual trigger fallback
 - **Achievements, stats, player identity** exposed to your game as `window.steam`
 - **Steam Deck / Steam Linux Runtime fixes** — library path ordering, sandbox/zygote switches, clean process exit so Steam notices the game closed
 - **Cloud-syncable JSON save file** in the platform app-data dir
@@ -25,7 +30,7 @@ Extracted from a shipped Steam game ([DICEPTION](https://store.steampowered.com/
 
 ## Try the example
 
-A PixiJS v8 demo lives in [`example/`](example): up to 4 players move circles with gamepads (keyboard fallback: WASD / arrows), `F` fullscreen, `Space` unlocks a test achievement, `Shift+Tab` opens the overlay.
+A PixiJS v8 demo lives in [`example/`](example): up to 4 players move circles with gamepads (keyboard fallback: WASD / arrows), `F` fullscreen, `Space` unlocks a test achievement.
 
 ```bash
 npm install      # the package's own deps (only needed for the file:.. link)

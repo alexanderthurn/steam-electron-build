@@ -1,6 +1,6 @@
 {
   "name": "steam-electron-build",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Ship any HTML5/WebGL game to Steam with Electron. One command locally, same command in CI. Steam overlay, achievements, saves and Steam Deck fixes included.",
   "license": "MIT",
   "author": "Alexander Thurn",
@@ -15,7 +15,8 @@
     "bin/",
     "runtime/",
     "native/",
-    "assets/"
+    "assets/",
+    "steamworks_sdk/"
   ],
   "keywords": [
     "steam",
@@ -32,6 +33,6 @@
     "electron": "^43.0.0",
     "electron-builder": "^26.8.1",
     "peer": "^1.0.2",
-    "steamworks.js": "^0.4.0"
+    "steamworks-ffi-node": "0.10.4"
   }
 }
