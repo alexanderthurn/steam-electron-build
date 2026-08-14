@@ -121,7 +121,18 @@ export async function mirrorLocalStorage({ file, prefix = '', exclude = [], debo
 
     const mirrored = (key) => key.startsWith(prefix) && !exclude.includes(key);
 
-    const stored = await storage.load(file);
+    // A half-written or corrupt file must never take the game down with it —
+    // callers await this during startup. Treat it as empty: local data stands,
+    // and the next write repairs the file.
+    const read = async () => {
+        try {
+            return await storage.load(file);
+        } catch {
+            return {};
+        }
+    };
+
+    const stored = await read();
     for (const [key, value] of Object.entries(stored?.[MIRROR_FIELD] ?? {})) {
         if (mirrored(key) && typeof value === 'string') localStorage.setItem(key, value);
     }
@@ -139,7 +150,7 @@ export async function mirrorLocalStorage({ file, prefix = '', exclude = [], debo
     const flush = async () => {
         timer = null;
         // Re-read so a concurrent writer's other fields survive our update.
-        const current = await storage.load(file);
+        const current = await read();
         await storage.save({ ...current, [MIRROR_FIELD]: snapshot(), mirroredAt: Date.now() }, file);
     };
     const schedule = () => {
