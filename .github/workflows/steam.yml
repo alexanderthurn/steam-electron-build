@@ -44,9 +44,9 @@ jobs:
       run:
         working-directory: ${{ inputs.working-directory }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
 
@@ -54,7 +54,7 @@ jobs:
 
       - run: npx steam-electron-build build ${{ matrix.target }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
           path: ${{ inputs.working-directory }}/dist-electron/${{ matrix.target }}/
@@ -64,9 +64,21 @@ jobs:
     if: inputs.deploy && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: steam-builds
+
+      # Steam accepts a build with zero files without complaining, so a change in
+      # how artifacts land on disk would silently ship an empty depot.
+      - name: Verify depot contents
+        run: |
+          for d in win mac linux; do
+            if [ ! -d "steam-builds/$d" ] || [ -z "$(ls -A "steam-builds/$d")" ]; then
+              echo "steam-builds/$d is missing or empty — refusing to upload"
+              exit 1
+            fi
+            echo "$d: $(du -sh "steam-builds/$d" | cut -f1)"
+          done
 
       - name: Publish to Steam
         uses: game-ci/steam-deploy@v3
