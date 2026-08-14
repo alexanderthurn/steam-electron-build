@@ -94,6 +94,84 @@ export const storage = {
     },
 };
 
+// ── Cloud-mirrored localStorage ───────────────────────────────────────────────
+// Games keep using localStorage; this copies it into the save file (which Steam
+// Auto-Cloud syncs) and back. Generic on purpose: it mirrors every key matching
+// a prefix, so settings added later need no extra wiring.
+
+/** Where the mirror lives inside the save file, kept apart from game state. */
+const MIRROR_FIELD = 'localStorage';
+
+/**
+ * Mirror localStorage into the cloud-synced save file.
+ *
+ * The file wins at startup (Steam has already pulled a newer copy down before
+ * launch); memory wins for the rest of the session. That is right for one
+ * machine at a time — simultaneous play on two machines needs real merge rules.
+ *
+ * Safe no-op in a browser, where there is no save file to sync.
+ *
+ * @param {{ prefix?: string, exclude?: string[], debounceMs?: number }} [options]
+ * @returns {Promise<boolean>} true when mirroring is active
+ */
+export async function mirrorLocalStorage({ prefix = '', exclude = [], debounceMs = 400 } = {}) {
+    if (!window.electronStorage) return false;
+
+    const mirrored = (key) => key.startsWith(prefix) && !exclude.includes(key);
+
+    const file = await storage.load();
+    for (const [key, value] of Object.entries(file?.[MIRROR_FIELD] ?? {})) {
+        if (mirrored(key) && typeof value === 'string') localStorage.setItem(key, value);
+    }
+
+    const snapshot = () => {
+        const out = {};
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && mirrored(key)) out[key] = localStorage.getItem(key);
+        }
+        return out;
+    };
+
+    let timer = null;
+    const flush = async () => {
+        timer = null;
+        // Re-read so a concurrent writer's other fields survive our update.
+        const current = await storage.load();
+        await storage.save({ ...current, [MIRROR_FIELD]: snapshot(), mirroredAt: Date.now() });
+    };
+    const schedule = () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => void flush(), debounceMs);
+    };
+
+    const nativeSet = localStorage.setItem.bind(localStorage);
+    const nativeRemove = localStorage.removeItem.bind(localStorage);
+    const nativeClear = localStorage.clear.bind(localStorage);
+    localStorage.setItem = (key, value) => {
+        nativeSet(key, value);
+        if (mirrored(key)) schedule();
+    };
+    localStorage.removeItem = (key) => {
+        nativeRemove(key);
+        if (mirrored(key)) schedule();
+    };
+    localStorage.clear = () => {
+        nativeClear();
+        schedule();
+    };
+
+    // A debounced write can still be pending when the window goes away.
+    window.addEventListener('pagehide', () => {
+        if (timer) {
+            clearTimeout(timer);
+            void flush();
+        }
+    });
+
+    return true;
+}
+
 // ── Open URL ──────────────────────────────────────────────────────────────────
 
 export function openUrl(url) {
