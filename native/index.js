@@ -83,14 +83,16 @@ export async function toggleFullscreen() {
 // ── Storage (JSON save file under Electron, localStorage in browser) ──────────
 
 export const storage = {
-    async load() {
-        if (window.electronStorage) return JSON.parse(await window.electronStorage.readAll());
-        return JSON.parse(localStorage.getItem('save') ?? '{}');
+    /** `file` names a file in the app-data dir (default save.json), so a Steam
+     *  Auto-Cloud rule can match some kinds of state and skip others. */
+    async load(file) {
+        if (window.electronStorage) return JSON.parse(await window.electronStorage.readAll(file));
+        return JSON.parse(localStorage.getItem(file ? `save:${file}` : 'save') ?? '{}');
     },
-    async save(data) {
+    async save(data, file) {
         const json = JSON.stringify(data);
-        if (window.electronStorage) return window.electronStorage.writeAll(json);
-        localStorage.setItem('save', json);
+        if (window.electronStorage) return window.electronStorage.writeAll(json, file);
+        localStorage.setItem(file ? `save:${file}` : 'save', json);
     },
 };
 
@@ -111,16 +113,16 @@ const MIRROR_FIELD = 'localStorage';
  *
  * Safe no-op in a browser, where there is no save file to sync.
  *
- * @param {{ prefix?: string, exclude?: string[], debounceMs?: number }} [options]
+ * @param {{ file?: string, prefix?: string, exclude?: string[], debounceMs?: number }} [options]
  * @returns {Promise<boolean>} true when mirroring is active
  */
-export async function mirrorLocalStorage({ prefix = '', exclude = [], debounceMs = 400 } = {}) {
+export async function mirrorLocalStorage({ file, prefix = '', exclude = [], debounceMs = 400 } = {}) {
     if (!window.electronStorage) return false;
 
     const mirrored = (key) => key.startsWith(prefix) && !exclude.includes(key);
 
-    const file = await storage.load();
-    for (const [key, value] of Object.entries(file?.[MIRROR_FIELD] ?? {})) {
+    const stored = await storage.load(file);
+    for (const [key, value] of Object.entries(stored?.[MIRROR_FIELD] ?? {})) {
         if (mirrored(key) && typeof value === 'string') localStorage.setItem(key, value);
     }
 
@@ -137,8 +139,8 @@ export async function mirrorLocalStorage({ prefix = '', exclude = [], debounceMs
     const flush = async () => {
         timer = null;
         // Re-read so a concurrent writer's other fields survive our update.
-        const current = await storage.load();
-        await storage.save({ ...current, [MIRROR_FIELD]: snapshot(), mirroredAt: Date.now() });
+        const current = await storage.load(file);
+        await storage.save({ ...current, [MIRROR_FIELD]: snapshot(), mirroredAt: Date.now() }, file);
     };
     const schedule = () => {
         if (timer) clearTimeout(timer);

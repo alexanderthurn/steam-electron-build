@@ -59,9 +59,9 @@ contextBridge.exposeInMainWorld('electronWin', {
 // ── Storage ───────────────────────────────────────────────────────────────────
 
 contextBridge.exposeInMainWorld('electronStorage', {
-    readAll:  ()     => ipcRenderer.invoke('storage:readAll'),
-    writeAll: (data) => ipcRenderer.invoke('storage:writeAll', data),
-    getPath:  ()     => ipcRenderer.invoke('storage:getPath'),
+    readAll:  (file)       => ipcRenderer.invoke('storage:readAll', file),
+    writeAll: (data, file) => ipcRenderer.invoke('storage:writeAll', data, file),
+    getPath:  (file)       => ipcRenderer.invoke('storage:getPath', file),
 });
 
 // ── Open URL ──────────────────────────────────────────────────────────────────

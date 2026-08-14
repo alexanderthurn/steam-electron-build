@@ -387,10 +387,14 @@ function startSteamPumps() {
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 
-function getSavePath() {
+// Callers may name their own file (settings, replays, …) so a Steam Auto-Cloud
+// rule can match some and skip others. basename() keeps a crafted name from
+// escaping the app-data dir.
+function getSavePath(file) {
     const dataDir = app.getPath('userData');
     fs.mkdirSync(dataDir, { recursive: true });
-    return path.join(dataDir, 'save.json');
+    const name = typeof file === 'string' && file.trim() ? path.basename(file.trim()) : 'save.json';
+    return path.join(dataDir, name);
 }
 
 // ── Window ────────────────────────────────────────────────────────────────────
@@ -747,16 +751,16 @@ ipcMain.handle('steam:netSend', (_e, steamId64Str, payload) => {
 
 // ── IPC: Storage ──────────────────────────────────────────────────────────────
 
-ipcMain.handle('storage:readAll', () => {
-    const p = getSavePath();
+ipcMain.handle('storage:readAll', (_e, file) => {
+    const p = getSavePath(file);
     return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '{}';
 });
 
-ipcMain.handle('storage:writeAll', (_e, data) =>
-    fs.writeFileSync(getSavePath(), data, 'utf8'));
+ipcMain.handle('storage:writeAll', (_e, data, file) =>
+    fs.writeFileSync(getSavePath(file), data, 'utf8'));
 
-ipcMain.handle('storage:getPath', () =>
-    getSavePath());
+ipcMain.handle('storage:getPath', (_e, file) =>
+    getSavePath(file));
 
 // ── IPC: Window management ────────────────────────────────────────────────────
 
