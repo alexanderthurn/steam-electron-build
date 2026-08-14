@@ -52,6 +52,9 @@ function loadConfig() {
         // Opt-in LAN PeerServer + UDP discovery (default off — no open ports).
         lan: c.lan === true,
         lanDiscoveryPort: c.lanDiscoveryPort,
+        // Off by default: universal roughly doubles mac depot size and build
+        // time, and only matters once Intel Macs are worth supporting.
+        macUniversal: c.macUniversal === true,
     };
 }
 
@@ -213,10 +216,10 @@ async function build(cfg, platform) {
         { from: 'steamworks_sdk', to: 'steamworks_sdk' },
         { from: 'build/icon.png', to: 'icon.png' },
     ];
-    // macOS ships universal (x64 + arm64) so the single Steam depot also runs on
-    // Intel Macs; win/linux stay on the runner's default arch.
+    // With macUniversal the mac depot carries x64 + arm64 so it also runs on
+    // Intel Macs; otherwise every platform follows the build machine's arch.
     await builder.build({
-        targets: platform === 'mac'
+        targets: platform === 'mac' && cfg.macUniversal
             ? targets.mac.createTarget('dir', builder.Arch.universal)
             : targets[platform].createTarget('dir'),
         projectDir: stage,

@@ -141,6 +141,7 @@ All optional, in your `package.json`:
   "dist": "dist",                    // your web build output dir
   "icon": "icon.png",                // 512x512 png (all platform icons derive from it)
   "extend": "steam-electron-build.extend.cjs",  // optional main-process hook, see below
+  "macUniversal": false,             // build mac as x64+arm64 so Intel Macs work (default false)
   "lan": false,                      // opt-in LAN PeerServer + UDP discovery (default false)
   "lanDiscoveryPort": 41234          // optional; only used when lan is true
 }
