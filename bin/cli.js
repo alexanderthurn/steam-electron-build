@@ -60,13 +60,32 @@ function fail(msg) {
     process.exit(1);
 }
 
+// Locate a package's own package.json. Packages with an "exports" map that does
+// not list "./package.json" (peer@1, for one) make the direct resolve throw, so
+// fall back to resolving the entry point and walking up to the package root.
+function resolvePkgJson(name) {
+    try {
+        return resolveDep(`${name}/package.json`);
+    } catch (e) {
+        if (e.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED') throw e;
+    }
+    let dir = path.dirname(resolveDep(name));
+    while (dir !== path.dirname(dir)) {
+        const candidate = path.join(dir, 'package.json');
+        if (fs.existsSync(candidate)
+            && JSON.parse(fs.readFileSync(candidate, 'utf8')).name === name) return candidate;
+        dir = path.dirname(dir);
+    }
+    throw Object.assign(new Error(`cannot locate package.json for ${name}`), { code: 'MODULE_NOT_FOUND' });
+}
+
 /** Copy an npm package and its production dependency tree into destNodeModules. */
 function copyPackageTree(name, destNodeModules, seen = new Set()) {
     if (seen.has(name)) return;
     seen.add(name);
     let pkgJsonPath;
     try {
-        pkgJsonPath = resolveDep(`${name}/package.json`);
+        pkgJsonPath = resolvePkgJson(name);
     } catch {
         console.warn(`steam-electron-build: optional dep "${name}" not found — skipped`);
         return;
@@ -164,7 +183,7 @@ async function build(cfg, platform) {
     if (cfg.lan) {
         // PeerServer + transitive deps (express, ws, …) — only when LAN is opted in
         copyPackageTree('peer', path.join(stage, 'node_modules'));
-        stageDeps.peer = require(resolveDep('peer/package.json')).version;
+        stageDeps.peer = require(resolvePkgJson('peer')).version;
     }
 
     fs.writeFileSync(path.join(stage, 'package.json'), JSON.stringify({
