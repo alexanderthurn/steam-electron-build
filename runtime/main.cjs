@@ -93,7 +93,12 @@ function initSteam() {
             steam.setSdkPath(sdkPath);
         }
 
-        const ok = steam.init({ appId: Number(cfg.steamAppId) || 480 });
+        // Steam sets SteamAppId to whichever app it launched us as, which is a
+        // different id for a playtest or demo than the one baked into the build.
+        // Trusting the environment lets one binary serve all of them; the config
+        // value is the fallback for running outside the Steam client.
+        const launchedAs = Number(process.env.SteamAppId || process.env.SteamGameId);
+        const ok = steam.init({ appId: launchedAs || Number(cfg.steamAppId) || 480 });
         if (!ok) {
             console.warn('[Steam] Init returned false');
             steam = null;
