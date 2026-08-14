@@ -213,8 +213,12 @@ async function build(cfg, platform) {
         { from: 'steamworks_sdk', to: 'steamworks_sdk' },
         { from: 'build/icon.png', to: 'icon.png' },
     ];
+    // macOS ships universal (x64 + arm64) so the single Steam depot also runs on
+    // Intel Macs; win/linux stay on the runner's default arch.
     await builder.build({
-        targets: targets[platform].createTarget('dir'),
+        targets: platform === 'mac'
+            ? targets.mac.createTarget('dir', builder.Arch.universal)
+            : targets[platform].createTarget('dir'),
         projectDir: stage,
         config: {
             appId: cfg.appId,
@@ -230,6 +234,11 @@ async function build(cfg, platform) {
             icon: 'build/icon.png',
             mac: {
                 identity: null,
+                // koffi (and other prebuilt natives) ship every arch in arch-named
+                // folders, so the same .node appears in both halves of a universal
+                // build. @electron/universal cannot classify those on its own —
+                // taking one copy is correct precisely because they are identical.
+                x64ArchFiles: '**/*.node',
                 // Needed for Metal overlay mirroring on macOS (ffi-node overlay).
                 entitlements: path.join(PKG_ROOT, 'assets', 'entitlements.mac.plist'),
                 entitlementsInherit: path.join(PKG_ROOT, 'assets', 'entitlements.mac.plist'),
@@ -250,9 +259,19 @@ async function build(cfg, platform) {
 // flatten so the folder is directly uploadable as a Steam depot.
 function flatten(out, cfg, platform) {
     const keep = platform === 'mac' ? `${cfg.productName}.app` : null;
-    for (const dir of fs.readdirSync(out)) {
+    const dirs = fs.readdirSync(out)
+        .filter(d => fs.statSync(path.join(out, d)).isDirectory());
+    // A universal mac build leaves its per-arch inputs (mac-arm64/, mac-x64/)
+    // beside the merged mac-universal/ — hoisting all of them would clobber the
+    // merged app with an arch-specific one, so drop everything but the merge.
+    const merged = platform === 'mac' ? dirs.find(d => d.endsWith('-universal')) : null;
+    for (const dir of dirs) {
         const src = path.join(out, dir);
-        if (!fs.statSync(src).isDirectory() || dir === keep) continue;
+        if (dir === keep) continue;
+        if (merged && dir !== merged) {
+            fs.rmSync(src, { recursive: true, force: true });
+            continue;
+        }
         for (const entry of fs.readdirSync(src)) {
             const to = path.join(out, entry);
             fs.rmSync(to, { recursive: true, force: true });
