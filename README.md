@@ -9,8 +9,10 @@ npx steam-electron-build win          # depot-ready folder in dist-electron/win 
 ```
 
 Installed straight from GitHub, not the npm registry — see the redistributables
-note below for why. npm records the exact commit in your lockfile, so pick up
-later fixes by re-running that install; `npm update` will not move a git pin.
+note below for why. npm records the exact commit in your lockfile; `npm update
+steam-electron-build` re-resolves it to the branch head. The version field is
+therefore not what consumers resolve on, so bump it in the same commit as a
+change or two different code states end up wearing the same number.
 
 No config needed to start: it defaults to Steam's public test app **480 (Spacewar)**, so Steam integration works on any machine with the Steam client running — no Steamworks partner account required for testing.
 
@@ -18,7 +20,14 @@ Steamworks redistributables (`libsteam_api` / `steam_api64.dll`) live under `ste
 
 Uses **[steamworks-ffi-node](https://github.com/ArtyProf/steamworks-ffi-node)** (Steamworks SDK **1.64** redistributables) for lobbies, achievements/stats, and modern **ISteamNetworkingSockets** P2P.
 
-Steam Overlay Shift+Tab is **not** wired via the experimental Electron Metal/GL content-mirror (it opens a second window and fails on macOS). `activateOverlay()` still calls the Steam overlay API; injection into Electron remains a known Chromium limitation.
+Steam Overlay Shift+Tab is **not** wired to steamworks-ffi-node's Electron
+overlay. That path is a frame mirror, not injection: it opens a second native
+window and drives it with `webContents.capturePage()` every frame, reading each
+frame back to a CPU bitmap and re-uploading it — unaffordable for a 60fps 3D
+game — and its input forwarding is implemented for Linux/X11 only. What is wired
+is the programmatic API: `activateOverlay()`, the invite dialog and the store
+page, which is what players actually need. Injection into Chromium remains a
+Steam limitation, not something a wrapper can fix.
 
 Extracted from a shipped Steam game ([DICEPTION](https://store.steampowered.com/app/3689240/)), so the annoying parts are already solved:
 

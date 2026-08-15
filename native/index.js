@@ -113,13 +113,18 @@ const MIRROR_FIELD = 'localStorage';
  *
  * Safe no-op in a browser, where there is no save file to sync.
  *
- * @param {{ file?: string, prefix?: string, exclude?: string[], debounceMs?: number }} [options]
+ * @param {{ file?: string, prefix?: string, excludePrefix?: string, exclude?: string[], debounceMs?: number }} [options]
  * @returns {Promise<boolean>} true when mirroring is active
  */
-export async function mirrorLocalStorage({ file, prefix = '', exclude = [], debounceMs = 400 } = {}) {
+export async function mirrorLocalStorage({ file, prefix = '', excludePrefix, exclude = [], debounceMs = 400 } = {}) {
     if (!window.electronStorage) return false;
 
-    const mirrored = (key) => key.startsWith(prefix) && !exclude.includes(key);
+    // excludePrefix carves a whole namespace out — so a second mirror can own
+    // e.g. every `<prefix>user-` key without this one listing them individually,
+    // which would otherwise put each newly added key in both files.
+    const mirrored = (key) => key.startsWith(prefix)
+        && !(excludePrefix && key.startsWith(excludePrefix))
+        && !exclude.includes(key);
 
     // A half-written or corrupt file must never take the game down with it —
     // callers await this during startup. Treat it as empty: local data stands,
