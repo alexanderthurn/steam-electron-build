@@ -771,7 +771,13 @@ ipcMain.handle('win:setPosition',    (_e, pos) => mainWin?.setPosition(Math.roun
 ipcMain.handle('win:setSize',        (_e, sz)  => mainWin?.setSize(Math.round(sz.width), Math.round(sz.height)));
 ipcMain.handle('win:outerPosition',  () => { const [x, y] = mainWin?.getPosition() ?? [0, 0]; return { x, y }; });
 ipcMain.handle('win:outerSize',      () => { const [width, height] = mainWin?.getSize() ?? [800, 600]; return { width, height }; });
-ipcMain.handle('win:openDevtools',   () => { if (!app.isPackaged) mainWin?.webContents.openDevTools(); });
+// Packaged builds keep devtools off for players, but a shipped build is the
+// only place some bugs appear (asar paths, install dirs with odd characters).
+// Steam's Launch Options pass arguments rather than environment, so accept both.
+const devtoolsAllowed = !app.isPackaged
+    || process.env.STEAM_ELECTRON_DEVTOOLS === '1'
+    || process.argv.includes('--devtools');
+ipcMain.handle('win:openDevtools',   () => { if (devtoolsAllowed) mainWin?.webContents.openDevTools(); });
 
 ipcMain.handle('win:getMonitors', () =>
     screen.getAllDisplays().map(d => ({

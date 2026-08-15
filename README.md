@@ -197,6 +197,21 @@ Depot mapping follows the steam-deploy convention: depot ids appid+1 (win), +2 (
 3. Add the workflow + secrets above
 4. `git tag v1.0.0 && git push --tags`
 
+## Debugging a packaged build
+
+`F12` opens devtools. In a packaged build it is ignored unless you opt in, since
+players should not be able to open it by accident:
+
+```bash
+STEAM_ELECTRON_DEVTOOLS=1 ./YourGame        # env var
+./YourGame --devtools                       # or a flag
+```
+
+Use the flag from Steam: **Properties → Launch Options → `--devtools`**, since
+Steam passes arguments, not environment variables. Bugs that only appear in a
+shipped build — asar paths, install directories containing spaces or `(x86)` —
+are otherwise invisible.
+
 ## Steam Deck notes
 
 The Linux build runs inside the Steam Linux Runtime. The runtime applies the required Electron switches (`no-sandbox`, `no-zygote`, `in-process-gpu`, `disable-dev-shm-usage`) and prepends the bundled `libsteam_api.so` to `LD_LIBRARY_PATH` before `steamworks.js` loads. These look arbitrary but each one fixes a real Steam Deck failure — they're the main reason this package exists.
