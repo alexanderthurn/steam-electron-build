@@ -155,6 +155,7 @@ All optional, in your `package.json`:
   "icon": "icon.png",                // 512x512 png (all platform icons derive from it)
   "extend": "steam-electron-build.extend.cjs",  // optional main-process hook, see below
   "macUniversal": false,             // build mac as x64+arm64 so Intel Macs work (default false)
+  "fullscreen": true,                // first-launch window mode (default true)
   "lan": false,                      // opt-in LAN PeerServer + UDP discovery (default false)
   "lanDiscoveryPort": 41234          // optional; only used when lan is true
 }
@@ -205,6 +206,19 @@ Depot mapping follows the steam-deploy convention: depot ids appid+1 (win), +2 (
 2. Set `steamAppId` in your `steamElectronBuild` config
 3. Add the workflow + secrets above
 4. `git tag v1.0.0 && git push --tags`
+
+## Window state
+
+The window starts fullscreen (set `"fullscreen": false` to start windowed) and
+its size, position and mode are remembered in `window-state.json` in the
+app-data dir. `F11` / `Alt+Enter` toggle it, and the new mode is what the next
+launch uses.
+
+That file is deliberately **not** a `.sav`: geometry is machine-specific, so a
+desktop's 2560x1440 bounds arriving on a 1280x800 Steam Deck through Steam Cloud
+would put the window off the screen. Restored bounds are also clamped to a
+display that currently exists, so unplugging a monitor or changing resolution
+falls back to the default size rather than opening off-screen.
 
 ## Debugging a packaged build
 

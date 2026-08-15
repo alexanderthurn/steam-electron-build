@@ -397,6 +397,57 @@ function getSavePath(file) {
     return path.join(dataDir, name);
 }
 
+// ── Window state ──────────────────────────────────────────────────────────────
+// Remembered across launches in the app-data dir. Deliberately NOT a .sav:
+// geometry is machine-specific, and a desktop's 2560x1440 bounds arriving on a
+// 1280x800 Steam Deck via Steam Cloud would put the window off the screen.
+
+const WINDOW_STATE_FILE = 'window-state.json';
+const DEFAULT_BOUNDS = { width: 1280, height: 720 };
+
+function readWindowState() {
+    try {
+        const raw = fs.readFileSync(path.join(app.getPath('userData'), WINDOW_STATE_FILE), 'utf8');
+        const s = JSON.parse(raw);
+        return s && typeof s === 'object' ? s : {};
+    } catch {
+        return {};   // absent or corrupt: first launch behaviour
+    }
+}
+
+function writeWindowState(state) {
+    try {
+        fs.writeFileSync(
+            path.join(app.getPath('userData'), WINDOW_STATE_FILE),
+            JSON.stringify(state),
+            'utf8',
+        );
+    } catch { /* read-only home, quota — never worth failing a quit over */ }
+}
+
+/**
+ * Saved bounds are only usable if they still fit a display that exists now.
+ * Guards against unplugged monitors, resolution changes and moving an install
+ * (or a synced file) onto a smaller screen such as the Deck.
+ */
+function usableBounds(saved) {
+    if (!saved || typeof saved.width !== 'number' || typeof saved.height !== 'number') return null;
+    if (saved.width < 640 || saved.height < 480) return null;
+    if (typeof saved.x !== 'number' || typeof saved.y !== 'number') {
+        return { width: saved.width, height: saved.height };
+    }
+    const area = screen.getDisplayMatching(saved).workArea;
+    const visible = saved.x < area.x + area.width && saved.x + saved.width > area.x
+        && saved.y < area.y + area.height && saved.y + saved.height > area.y;
+    if (!visible) return null;
+    return {
+        x: saved.x,
+        y: saved.y,
+        width: Math.min(saved.width, area.width),
+        height: Math.min(saved.height, area.height),
+    };
+}
+
 // ── Window ────────────────────────────────────────────────────────────────────
 
 let mainWin = null;
@@ -409,10 +460,19 @@ function createWindow() {
     const iconPath = app.isPackaged
         ? path.join(process.resourcesPath, 'icon.png')
         : cfg.iconPath;
+    const saved = readWindowState();
+    const bounds = usableBounds(saved.bounds) ?? DEFAULT_BOUNDS;
+    // First launch follows the game's config (default fullscreen — what players
+    // expect from Steam, and the only sensible mode on the Deck); after that the
+    // player's own last choice wins.
+    const startFullscreen = typeof saved.fullscreen === 'boolean'
+        ? saved.fullscreen
+        : cfg.fullscreen !== false;
+
     mainWin = new BrowserWindow({
-        width: 1280,
-        height: 720,
-        center: true,
+        ...bounds,
+        center: bounds.x === undefined,
+        fullscreen: startFullscreen,
         frame: true,
         resizable: true,
         minimizable: true,
@@ -432,8 +492,32 @@ function createWindow() {
 
     mainWin.loadFile(indexHtml);
 
-    mainWin.on('move',   () => safeSend('win:moved'));
-    mainWin.on('resize', () => safeSend('win:resized'));
+    // Remember geometry only while windowed — capturing bounds in fullscreen or
+    // maximized would save the screen size and lose the restore size.
+    let saveTimer = null;
+    const rememberWindowState = () => {
+        if (!mainWin || mainWin.isDestroyed()) return;
+        const state = { fullscreen: mainWin.isFullScreen() };
+        if (!state.fullscreen && !mainWin.isMaximized() && !mainWin.isMinimized()) {
+            state.bounds = mainWin.getNormalBounds();
+        } else if (saved.bounds) {
+            state.bounds = saved.bounds;
+        }
+        writeWindowState(state);
+    };
+    const scheduleRemember = () => {
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = setTimeout(rememberWindowState, 400);   // drags fire continuously
+    };
+
+    mainWin.on('move',   () => { safeSend('win:moved'); scheduleRemember(); });
+    mainWin.on('resize', () => { safeSend('win:resized'); scheduleRemember(); });
+    mainWin.on('enter-full-screen', rememberWindowState);
+    mainWin.on('leave-full-screen', rememberWindowState);
+    mainWin.on('close', () => {
+        if (saveTimer) clearTimeout(saveTimer);
+        rememberWindowState();
+    });
     mainWin.on('closed', () => { mainWin = null; });
 }
 

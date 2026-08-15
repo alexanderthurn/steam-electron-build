@@ -91,6 +91,14 @@ window.addEventListener('DOMContentLoaded', () => {
             // (exposeInMainWorld) is only visible to the page, not preload.
             ipcRenderer.invoke('steam:activateOverlay', 'Friends');
         }
+        // F11 / Alt+Enter toggle fullscreen — the conventional game bindings.
+        // Reuses the existing channels; main remembers the new state for the
+        // next launch. Games can still drive this themselves via electronWin.
+        if (e.key === 'F11' || (e.altKey && e.key === 'Enter')) {
+            e.preventDefault();
+            ipcRenderer.invoke('win:isFullscreen')
+                .then((on) => ipcRenderer.invoke('win:setFullscreen', !on));
+        }
         // F12 opens devtools (main process ignores this in packaged builds).
         if (e.key === 'F12') {
             e.preventDefault();
