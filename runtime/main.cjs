@@ -495,14 +495,18 @@ function createWindow() {
     // Remember geometry only while windowed — capturing bounds in fullscreen or
     // maximized would save the screen size and lose the restore size.
     let saveTimer = null;
+    // Tracks the live windowed rect. Must not fall back to the file's value:
+    // going fullscreen after moving the window would then rewrite the position
+    // with the one from launch, and the next launch would open fullscreen on
+    // whichever monitor the window started on rather than the one it ended on.
+    let windowedBounds = usableBounds(saved.bounds) ?? null;
     const rememberWindowState = () => {
         if (!mainWin || mainWin.isDestroyed()) return;
         const state = { fullscreen: mainWin.isFullScreen() };
         if (!state.fullscreen && !mainWin.isMaximized() && !mainWin.isMinimized()) {
-            state.bounds = mainWin.getNormalBounds();
-        } else if (saved.bounds) {
-            state.bounds = saved.bounds;
+            windowedBounds = mainWin.getNormalBounds();
         }
+        if (windowedBounds) state.bounds = windowedBounds;
         writeWindowState(state);
     };
     const scheduleRemember = () => {
