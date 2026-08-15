@@ -87,7 +87,9 @@ window.addEventListener('DOMContentLoaded', () => {
         // always catch it, so trigger it manually.
         if (e.shiftKey && e.key === 'Tab') {
             e.preventDefault();
-            window.steam?.activateOverlay('Friends');
+            // Must use ipcRenderer here: contextIsolation means window.steam
+            // (exposeInMainWorld) is only visible to the page, not preload.
+            ipcRenderer.invoke('steam:activateOverlay', 'Friends');
         }
         // F12 opens devtools (main process ignores this in packaged builds).
         if (e.key === 'F12') {
