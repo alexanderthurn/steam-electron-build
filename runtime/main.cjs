@@ -472,7 +472,11 @@ function createWindow() {
     mainWin = new BrowserWindow({
         ...bounds,
         center: bounds.x === undefined,
-        fullscreen: startFullscreen,
+        // Only ever pass this when true: Electron documents that explicitly
+        // passing false hides or disables the fullscreen button on macOS, which
+        // also makes setFullScreen() a silent no-op for the window's lifetime.
+        ...(startFullscreen ? { fullscreen: true } : {}),
+        fullscreenable: true,
         frame: true,
         resizable: true,
         minimizable: true,

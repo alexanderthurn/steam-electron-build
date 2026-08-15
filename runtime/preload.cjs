@@ -94,7 +94,10 @@ window.addEventListener('DOMContentLoaded', () => {
         // F11 / Alt+Enter toggle fullscreen — the conventional game bindings.
         // Reuses the existing channels; main remembers the new state for the
         // next launch. Games can still drive this themselves via electronWin.
-        if (e.key === 'F11' || (e.altKey && e.key === 'Enter')) {
+        // macOS binds F11 to volume/Show Desktop, so it never reaches us there —
+        // Ctrl+Cmd+F is the platform's own fullscreen shortcut.
+        const macFullscreen = e.ctrlKey && e.metaKey && (e.key === 'f' || e.key === 'F');
+        if (e.key === 'F11' || (e.altKey && e.key === 'Enter') || macFullscreen) {
             e.preventDefault();
             ipcRenderer.invoke('win:isFullscreen')
                 .then((on) => ipcRenderer.invoke('win:setFullscreen', !on));

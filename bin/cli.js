@@ -51,6 +51,9 @@ function loadConfig() {
         hasWebBuild: !!pkg.scripts?.build,
         // Opt-in LAN PeerServer + UDP discovery (default off — no open ports).
         lan: c.lan === true,
+        // Without this the option is honoured only in packaged builds, where cfg
+        // comes straight from package.json rather than through this function.
+        fullscreen: c.fullscreen,
         lanDiscoveryPort: c.lanDiscoveryPort,
         // Off by default: universal roughly doubles mac depot size and build
         // time, and only matters once Intel Macs are worth supporting.
