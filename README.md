@@ -16,7 +16,13 @@ change or two different code states end up wearing the same number.
 
 No config needed to start: it defaults to Steam's public test app **480 (Spacewar)**, so Steam integration works on any machine with the Steam client running — no Steamworks partner account required for testing.
 
-Steamworks redistributables (`libsteam_api` / `steam_api64.dll`) live under `steamworks_sdk/redistributable_bin/` in this package (or your game root). Valve's license forbids npm packages from shipping those binaries as a public dependency; game/tool repos that already hold a Steamworks license can keep a local copy (as we do).
+Steamworks redistributables (`libsteam_api` / `steam_api64.dll`) live under
+`steamworks_sdk/redistributable_bin/` in this package (or your game root).
+Valve's [SDK Access Agreement](https://partner.steamgames.com/documentation/sdk_access_agreement)
+only licenses shipping that folder **with your software** — not the rest of the
+SDK. This repo keeps just `redistributable_bin` (we hold a Steamworks license)
+and stays off the npm registry so those binaries are not published as a
+registry package.
 
 Uses **[steamworks-ffi-node](https://github.com/ArtyProf/steamworks-ffi-node)** (Steamworks SDK **1.64** redistributables) for lobbies, achievements/stats, and modern **ISteamNetworkingSockets** P2P.
 
