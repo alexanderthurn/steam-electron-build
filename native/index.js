@@ -48,6 +48,13 @@ export const lobby = {
     setJoinable:      (flag) => window.steam?.lobby.setJoinable(flag) ?? Promise.resolve(false),
     openInviteDialog: () => window.steam?.lobby.openInviteDialog() ?? Promise.resolve(),
     getLobbies:       () => window.steam?.lobby.getLobbies() ?? Promise.resolve([]),
+    /**
+     * Lobby id from a "Join Game" invite that launched the app, or null.
+     * Call once at startup: onJoinRequested only reaches a listener that is
+     * already subscribed, and Steam delivers this before most games finish
+     * loading. Returns the id a single time.
+     */
+    takePendingJoin:  () => window.steam?.lobby.takePendingJoin?.() ?? Promise.resolve(null),
     /** fires on any member joining/leaving the current lobby */
     onChatUpdate:     (cb) => window.steam?.lobby.onChatUpdate(cb),
     /** fires when the user accepts a Steam overlay/friends-list "Join Game" invite */

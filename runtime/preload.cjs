@@ -31,6 +31,8 @@ contextBridge.exposeInMainWorld('steam', {
         setJoinable:       (flag)             => ipcRenderer.invoke('steam:lobbySetJoinable', flag),
         openInviteDialog:  ()                 => ipcRenderer.invoke('steam:lobbyOpenInviteDialog'),
         getLobbies:        ()                 => ipcRenderer.invoke('steam:lobbyGetLobbies'),
+        /** lobby id from a `+connect_lobby` launch, once — null if none */
+        takePendingJoin:   ()                 => ipcRenderer.invoke('steam:takePendingLobby'),
         onChatUpdate:      (cb) => ipcRenderer.on('steam:lobbyChatUpdate', (_e, data) => cb(data)),
         onJoinRequested:   (cb) => ipcRenderer.on('steam:lobbyJoinRequested', (_e, data) => cb(data)),
     },

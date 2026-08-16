@@ -322,23 +322,31 @@ function afterLobbyReady(lobbyId) {
     if (owner && self && owner !== self) ensureConnection(owner);
 }
 
+/** lobby id from `+connect_lobby`, held until the renderer collects it */
+let pendingConnectLobby = null;
+
 function emitConnectLobbyFromArgv() {
     // Steam launches with `+connect_lobby <id>` when the user accepts a
     // Join Game invite that starts the app. ffi-node does not yet expose
     // GameLobbyJoinRequested for already-running instances.
     const args = process.argv;
     for (let i = 0; i < args.length; i++) {
-        if (args[i] === '+connect_lobby' && args[i + 1]) {
-            const lobbySteamId = String(args[i + 1]);
-            // Defer until the window exists so the renderer can subscribe.
-            setTimeout(() => safeSend('steam:lobbyJoinRequested', { lobbySteamId }), 500);
-            return;
+        let lobbySteamId = null;
+        if (args[i] === '+connect_lobby' && args[i + 1]) lobbySteamId = String(args[i + 1]);
+        else {
+            const m = String(args[i]).match(/^\+connect_lobby[=:]?(\d+)/);
+            if (m) lobbySteamId = m[1];
         }
-        const m = String(args[i]).match(/^\+connect_lobby[=:]?(\d+)/);
-        if (m) {
-            setTimeout(() => safeSend('steam:lobbyJoinRequested', { lobbySteamId: m[1] }), 500);
-            return;
-        }
+        if (!lobbySteamId) continue;
+        // Held, not just fired: the renderer subscribes only after its own
+        // startup (asset loading included), which can easily outlast any fixed
+        // delay — an invite dropped there leaves the friend sitting in the menu
+        // wondering why accepting did nothing. It still gets pushed for a
+        // renderer that is already listening; whoever gets there first wins,
+        // and takePendingLobby clears it so a join can never run twice.
+        pendingConnectLobby = lobbySteamId;
+        setTimeout(() => safeSend('steam:lobbyJoinRequested', { lobbySteamId }), 500);
+        return;
     }
 }
 
@@ -971,6 +979,12 @@ ipcMain.handle('steam:lobbyMergeFullData', (_e, data) => {
 
 ipcMain.handle('steam:lobbySetJoinable', (_e, flag) =>
     currentLobbyId ? steam.matchmaking.setLobbyJoinable(currentLobbyId, !!flag) : false);
+
+ipcMain.handle('steam:takePendingLobby', () => {
+    const id = pendingConnectLobby;
+    pendingConnectLobby = null;
+    return id;
+});
 
 ipcMain.handle('steam:lobbyOpenInviteDialog', () => {
     if (!steam || !currentLobbyId) return;
