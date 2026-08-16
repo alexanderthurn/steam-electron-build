@@ -899,7 +899,7 @@ ipcMain.handle('win:setFullscreen',  (_e, flag) => mainWin?.setFullScreen(flag))
 // still rescales correctly underneath whatever the player picked.
 ipcMain.handle('win:setUiScale',      (_e, factor) => {
     const f = Number(factor);
-    uiScaleUser = Number.isFinite(f) && f > 0 ? Math.min(3, Math.max(0.5, f)) : 1;
+    uiScaleUser = Number.isFinite(f) && f > 0 ? Math.min(3, Math.max(0.25, f)) : 1;
     applyUiZoom();
 });
 ipcMain.handle('win:getUiScale',      () => uiScaleUser);
