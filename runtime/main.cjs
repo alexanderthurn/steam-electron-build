@@ -15,6 +15,22 @@ const cfg = process.env.STEAM_ELECTRON_BUILD_CONFIG
 // call it never open ports or load `peer`.
 const lanEnabled = cfg.lan === true;
 
+// Opt-in frame-mirrored Steam overlay (steamworks-ffi-node addElectronSteamOverlay).
+// Default stays off — use STEAM_ELECTRON_NATIVE_OVERLAY=1 or `dev --overlay`.
+// Disabled on macOS: ffi-node's path is a second *borderless* Metal window that
+// Steam injects into. On Mac that mirror sits offset under Electron, Shift+Tab
+// does not reliably open, and a framed single-window alternative does not exist
+// (Chromium cannot host Steam's injector).
+let nativeOverlayEnabled = process.env.STEAM_ELECTRON_NATIVE_OVERLAY === '1'
+    || cfg.nativeOverlay === true;
+if (nativeOverlayEnabled && process.platform === 'darwin') {
+    console.warn('[Steam] Native overlay mirror is not enabled on macOS (borderless dual-window; Shift+Tab unreliable).');
+    console.warn('[Steam] Using programmatic Friends overlay instead — Shift+Tab → activateOverlay().');
+    nativeOverlayEnabled = false;
+}
+if (nativeOverlayEnabled) process.env.STEAM_ELECTRON_NATIVE_OVERLAY = '1';
+else delete process.env.STEAM_ELECTRON_NATIVE_OVERLAY;
+
 const indexHtml = process.env.STEAM_ELECTRON_BUILD_CONFIG
     ? path.join(cfg.distDir, 'index.html')
     : path.join(app.getAppPath(), 'dist', 'index.html');
@@ -479,6 +495,10 @@ function applyUiZoom() {
     try {
         if (mainWin.webContents.getZoomFactor() !== rounded) {
             mainWin.webContents.setZoomFactor(rounded);
+            // Zoom changes the CSS viewport without a window 'resize' on some
+            // platforms (esp. entering macOS fullscreen) — tell the game to
+            // remeasure so canvases/filters don't keep a stale size.
+            safeSend('win:resized');
         }
     } catch { /* window torn down mid-resize */ }
 }
@@ -500,9 +520,13 @@ function createWindow() {
     // First launch follows the game's config (default fullscreen — what players
     // expect from Steam, and the only sensible mode on the Deck); after that the
     // player's own last choice wins.
-    const startFullscreen = typeof saved.fullscreen === 'boolean'
-        ? saved.fullscreen
-        : cfg.fullscreen !== false;
+    // Native overlay opens a second mirrored window — fullscreen on macOS stacks
+    // both views; force windowed when that path is opted in.
+    const startFullscreen = nativeOverlayEnabled
+        ? false
+        : (typeof saved.fullscreen === 'boolean'
+            ? saved.fullscreen
+            : cfg.fullscreen !== false);
 
     mainWin = new BrowserWindow({
         ...bounds,
@@ -531,7 +555,10 @@ function createWindow() {
 
     mainWin.loadFile(indexHtml);
     // Zoom must be re-applied per load: it is a property of the loaded frame.
-    mainWin.webContents.on('did-finish-load', applyUiZoom);
+    mainWin.webContents.on('did-finish-load', () => {
+        applyUiZoom();
+        maybeAttachNativeOverlay();
+    });
 
     // Remember geometry only while windowed — capturing bounds in fullscreen or
     // maximized would save the screen size and lose the restore size.
@@ -557,13 +584,72 @@ function createWindow() {
 
     mainWin.on('move',   () => { safeSend('win:moved'); scheduleRemember(); });
     mainWin.on('resize', () => { safeSend('win:resized'); scheduleRemember(); applyUiZoom(); });
-    mainWin.on('enter-full-screen', () => { rememberWindowState(); applyUiZoom(); });
-    mainWin.on('leave-full-screen', () => { rememberWindowState(); applyUiZoom(); });
+    mainWin.on('enter-full-screen', () => {
+        rememberWindowState();
+        applyUiZoom();
+        // macOS fullscreen often skips a meaningful DOM resize for the page.
+        safeSend('win:resized');
+    });
+    mainWin.on('leave-full-screen', () => {
+        rememberWindowState();
+        applyUiZoom();
+        safeSend('win:resized');
+    });
     mainWin.on('close', () => {
         if (saveTimer) clearTimeout(saveTimer);
         rememberWindowState();
     });
     mainWin.on('closed', () => { mainWin = null; });
+}
+
+/** Attach steamworks-ffi-node's mirrored native overlay when opted in. */
+let nativeOverlayAttached = false;
+function maybeAttachNativeOverlay() {
+    if (nativeOverlayAttached || !nativeOverlayEnabled || !steam || !mainWin || mainWin.isDestroyed()) return;
+    if (typeof steam.isOverlayAvailable !== 'function' || !steam.isOverlayAvailable()) {
+        console.warn('[Steam] Native overlay requested but isOverlayAvailable() is false');
+        return;
+    }
+    // Mirror window + Electron fullscreen = two stacked desktops on macOS.
+    if (mainWin.isFullScreen()) {
+        mainWin.setFullScreen(false);
+    }
+
+    // ffi-node ≥0.11 uses beginFrameSubscription; disable throttling so Mac
+    // occlusion (mirror covering Electron) does not freeze frame delivery.
+    try { mainWin.webContents.setBackgroundThrottling(false); } catch { /* older Electron */ }
+
+    const attach = () => {
+        if (nativeOverlayAttached || !mainWin || mainWin.isDestroyed() || !steam) return;
+        const { width, height } = mainWin.getContentBounds();
+        if (width < 2 || height < 2) {
+            setTimeout(attach, 200);
+            return;
+        }
+        try {
+            const ok = steam.addElectronSteamOverlay(mainWin, {
+                title: cfg.productName || 'Game',
+                fps: 60,
+                vsync: true,
+            });
+            if (ok) nativeOverlayAttached = true;
+            console.log(ok
+                ? '[Steam] Native overlay attached (Metal/GL mirror — Shift+Tab injects there)'
+                : '[Steam] Native overlay attach returned false');
+            if (ok && process.platform === 'darwin') {
+                console.log('[Steam] macOS: Electron stays for input; the borderless Metal window is what Steam hooks.');
+                console.log('[Steam] If Shift+Tab is dead: add this build as a non-Steam game, restart Steam, launch from Steam.');
+            }
+        } catch (e) {
+            console.warn('[Steam] Native overlay failed:', e.message);
+        }
+    };
+
+    // Wait for a real paint so the first subscribed frame is non-empty (avoids
+    // "[Metal Overlay] WARNING: No texture or pipeline state! texture=0x0").
+    mainWin.webContents.once('paint', () => setTimeout(attach, 100));
+    // Fallback if 'paint' never fires (some Electron builds).
+    setTimeout(attach, 1200);
 }
 
 function loadExtend() {

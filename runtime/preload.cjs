@@ -42,6 +42,8 @@ contextBridge.exposeInMainWorld('steam', {
 
 // ── Window management ─────────────────────────────────────────────────────────
 
+const nativeOverlay = process.env.STEAM_ELECTRON_NATIVE_OVERLAY === '1';
+
 contextBridge.exposeInMainWorld('electronWin', {
     close:             ()     => ipcRenderer.invoke('win:close'),
     setFullscreen:     (flag) => ipcRenderer.invoke('win:setFullscreen', flag),
@@ -56,6 +58,8 @@ contextBridge.exposeInMainWorld('electronWin', {
     getCurrentMonitor: ()     => ipcRenderer.invoke('win:getCurrentMonitor'),
     onMoved:           (cb)   => ipcRenderer.on('win:moved', (_e, data) => cb(data)),
     onResized:         (cb)   => ipcRenderer.on('win:resized', (_e, data) => cb(data)),
+    /** true when launched with native frame-mirrored Steam overlay */
+    isNativeOverlay:   ()     => nativeOverlay,
 });
 
 // ── Storage ───────────────────────────────────────────────────────────────────
@@ -85,9 +89,9 @@ contextBridge.exposeInMainWorld('electronLan', {
 
 window.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('keydown', (e) => {
-        // Steam expects Shift+Tab to open the overlay; the Electron hook doesn't
-        // always catch it, so trigger it manually.
-        if (e.shiftKey && e.key === 'Tab') {
+        // Programmatic Friends overlay. Skip when the native mirror is attached —
+        // Steam itself should own Shift+Tab on that path.
+        if (!nativeOverlay && e.shiftKey && e.key === 'Tab') {
             e.preventDefault();
             // Must use ipcRenderer here: contextIsolation means window.steam
             // (exposeInMainWorld) is only visible to the page, not preload.

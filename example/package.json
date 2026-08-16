@@ -7,12 +7,14 @@
     "productName": "SteamElectronBuildDemo",
     "appId": "com.steamelectronbuild.demo",
     "steamAppId": 480,
-    "lan": true
+    "lan": true,
+    "uiScale": false
   },
   "scripts": {
     "dev": "vite --host",
     "build": "vite build",
-    "start": "steam-electron-build dev",
+    "friends": "steam-electron-build dev",
+    "overlay": "steam-electron-build dev --overlay",
     "build:mac": "steam-electron-build mac",
     "build:win": "steam-electron-build win",
     "build:linux": "steam-electron-build linux"

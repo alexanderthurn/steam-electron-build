@@ -71,6 +71,10 @@ export const win = {
     setUiScale:    (factor) => window.electronWin?.setUiScale?.(factor) ?? Promise.resolve(),
     getUiScale:    () => window.electronWin?.getUiScale?.() ?? Promise.resolve(1),
     close:         () => window.electronWin?.close() ?? Promise.resolve(),
+    /** true when launched with steamworks-ffi-node's mirrored native overlay */
+    isNativeOverlay: () => !!window.electronWin?.isNativeOverlay?.(),
+    onMoved:       (cb) => window.electronWin?.onMoved?.(cb),
+    onResized:     (cb) => window.electronWin?.onResized?.(cb),
 };
 
 export async function toggleFullscreen() {

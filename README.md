@@ -26,14 +26,19 @@ registry package.
 
 Uses **[steamworks-ffi-node](https://github.com/ArtyProf/steamworks-ffi-node)** (Steamworks SDK **1.64** redistributables) for lobbies, achievements/stats, and modern **ISteamNetworkingSockets** P2P.
 
-Steam Overlay Shift+Tab is **not** wired to steamworks-ffi-node's Electron
-overlay. That path is a frame mirror, not injection: it opens a second native
-window and drives it with `webContents.capturePage()` every frame, reading each
-frame back to a CPU bitmap and re-uploading it — unaffordable for a 60fps 3D
-game — and its input forwarding is implemented for Linux/X11 only. What is wired
-is the programmatic API: `activateOverlay()`, the invite dialog and the store
-page, which is what players actually need. Injection into Chromium remains a
-Steam limitation, not something a wrapper can fix.
+Steam Overlay: Shift+Tab uses the **programmatic** API (`activateOverlay()` /
+Friends / invite / store). That is what this package ships and what players
+need.
+
+steamworks-ffi-node also offers a **native mirror** (`addElectronSteamOverlay`) —
+a second **borderless** Metal/GL window that copies Electron frames so Steam can
+inject, because Chromium itself cannot host the injector
+([their write-up](https://dev.to/arty_prof/steamworks-ffi-node-a-steamworks-sdk-library-for-javascript-game-frameworks-15h1)).
+That borderless second window is required by that design; there is no framed
+single-window option. On macOS the mirror sits offset under Electron and
+Shift+Tab is unreliable, so **`dev --overlay` is ignored on macOS** and falls
+back to programmatic Friends. On Windows/Linux you can still opt in with
+`steam-electron-build dev --overlay` to compare FPS cost — not a default ship path.
 
 Extracted from a shipped Steam game ([DICEPTION](https://store.steampowered.com/app/3689240/)), so the annoying parts are already solved:
 
@@ -49,13 +54,17 @@ Extracted from a shipped Steam game ([DICEPTION](https://store.steampowered.com/
 
 ## Try the example
 
-A PixiJS v8 demo lives in [`example/`](example): up to 4 players move circles with gamepads (keyboard fallback: WASD / arrows), `F` fullscreen, `Esc` closes the window, `Space` unlocks a test achievement.
+A PixiJS v8 demo lives in [`example/`](example): FPS HUD (smoothed), fullscreen
+plasma shader + heavy per-entity glow/blur entities, up to 4 players (WASD /
+arrows / gamepads), `=/+` spawn and `-` despawn, `F` fullscreen, `Esc` quit,
+`Space` achievement.
 
 ```bash
 npm install      # the package's own deps (only needed for the file:.. link)
 cd example
 npm install
-npm start        # = steam-electron-build dev
+npm run friends  # programmatic Friends overlay (Shift+Tab) — use this on macOS
+npm run overlay  # native mirror (Win/Linux); on macOS falls back to friends
 ```
 
 ## Using it in your game

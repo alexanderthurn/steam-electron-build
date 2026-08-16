@@ -235,6 +235,8 @@ async function build(cfg, platform) {
             asarUnpack: [
                 'node_modules/steamworks-ffi-node/**',
                 'node_modules/koffi/**',
+                // koffi 3.x ships its .node in a sibling @koromix/koffi-* package
+                'node_modules/@koromix/**',
             ],
             extraResources,
             icon: 'build/icon.png',
@@ -297,12 +299,25 @@ function flatten(out, cfg, platform) {
 
 // ── Entry ─────────────────────────────────────────────────────────────────────
 
-const [cmd, arg] = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const flags = new Set(argv.filter((a) => a.startsWith('--')));
+const positional = argv.filter((a) => !a.startsWith('--'));
+const [cmd, arg] = positional;
 const cfg = loadConfig();
+const wantNativeOverlay = flags.has('--overlay')
+    || process.env.STEAM_ELECTRON_NATIVE_OVERLAY === '1';
 
 const OS_SHORTCUTS = ['mac', 'win', 'linux'];
 
 if (cmd === 'dev') {
+    if (wantNativeOverlay) {
+        if (process.platform === 'darwin') {
+            console.warn('steam-electron-build: --overlay ignored on macOS (borderless dual-window mirror; use friends mode)');
+        } else {
+            process.env.STEAM_ELECTRON_NATIVE_OVERLAY = '1';
+            console.log('steam-electron-build: native Steam overlay mirror enabled (--overlay)');
+        }
+    }
     dev(cfg);
 } else if (cmd === 'build' || OS_SHORTCUTS.includes(cmd)) {
     // `steam-electron-build mac` is shorthand for `steam-electron-build build mac`
@@ -312,6 +327,7 @@ if (cmd === 'dev') {
 
 Usage:
   steam-electron-build dev            run the game in Electron (Steam works if the client is running)
+  steam-electron-build dev --overlay  native mirror (Win/Linux; ignored on macOS)
   steam-electron-build build <os>     depot-ready build in dist-electron/<os>   (mac | win | linux)
   steam-electron-build <os>           shorthand for build <os>
 
