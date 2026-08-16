@@ -509,6 +509,18 @@ function applyUiZoom() {
 // ── Window ────────────────────────────────────────────────────────────────────
 
 let mainWin = null;
+/** the game asked to be told before the window closes (see win:before-quit) */
+let quitHookWanted = false;
+let quitting = false;
+let quitTimer = null;
+/** upper bound on how long a goodbye may take before we close anyway */
+const QUIT_GRACE_MS = 1500;
+
+function finishQuit() {
+    if (quitTimer) clearTimeout(quitTimer);
+    quitTimer = null;
+    mainWin?.destroy();   // destroy, not close: the close handler already ran
+}
 
 function safeSend(channel, data) {
     if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send(channel, data);
@@ -598,9 +610,19 @@ function createWindow() {
         applyUiZoom();
         safeSend('win:resized');
     });
-    mainWin.on('close', () => {
+    mainWin.on('close', (e) => {
         if (saveTimer) clearTimeout(saveTimer);
         rememberWindowState();
+        // Closing the window during a match is a decision, not a network
+        // failure: without telling the game first, the other players sit
+        // through a reconnect grace window for someone who is never coming
+        // back. Give the renderer a moment to say goodbye over the wire, but
+        // never let a hung or uninterested game block the quit.
+        if (!quitHookWanted || quitting) return;
+        e.preventDefault();
+        quitting = true;
+        safeSend('win:before-quit');
+        quitTimer = setTimeout(finishQuit, QUIT_GRACE_MS);
     });
     mainWin.on('closed', () => { mainWin = null; });
 }
@@ -1000,6 +1022,10 @@ ipcMain.handle('storage:getPath', (_e, file) =>
 // ── IPC: Window management ────────────────────────────────────────────────────
 
 ipcMain.handle('win:close',          () => mainWin?.close());
+// Opt in from the renderer; without this the window closes immediately, so a
+// game that does not care pays nothing.
+ipcMain.handle('win:wantsQuitHook',  () => { quitHookWanted = true; });
+ipcMain.handle('win:confirmQuit',    () => finishQuit());
 ipcMain.handle('win:setFullscreen',  (_e, flag) => mainWin?.setFullScreen(flag));
 // Player's UI-size multiplier. Kept out of the auto factor so a display change
 // still rescales correctly underneath whatever the player picked.

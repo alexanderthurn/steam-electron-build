@@ -49,6 +49,11 @@ contextBridge.exposeInMainWorld('electronWin', {
     setFullscreen:     (flag) => ipcRenderer.invoke('win:setFullscreen', flag),
     isFullscreen:      ()     => ipcRenderer.invoke('win:isFullscreen'),
     setUiScale:        (f)    => ipcRenderer.invoke('win:setUiScale', f),
+    /** ask to be told before the window closes; without this it closes at once */
+    wantsQuitHook:     ()     => ipcRenderer.invoke('win:wantsQuitHook'),
+    onBeforeQuit:      (cb)   => ipcRenderer.on('win:before-quit', () => cb()),
+    /** "goodbye sent, you may close now" — also happens on a 1.5s timeout */
+    confirmQuit:       ()     => ipcRenderer.invoke('win:confirmQuit'),
     getUiScale:        ()     => ipcRenderer.invoke('win:getUiScale'),
     setPosition:       (pos)  => ipcRenderer.invoke('win:setPosition', pos),
     setSize:           (size) => ipcRenderer.invoke('win:setSize', size),
