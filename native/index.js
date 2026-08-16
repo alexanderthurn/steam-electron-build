@@ -24,6 +24,14 @@ export const steam = {
     setStat:            (name, value) => window.steam?.setStat(name, value) ?? Promise.resolve(),
     activateOverlay:    (dialog) => window.steam?.activateOverlay(dialog) ?? Promise.resolve(),
     openStore:          () => window.steam?.openStore() ?? Promise.resolve(),
+    /**
+     * Tell the friends list what this player is doing. With `lobbyId` set,
+     * friends get a working Join Game button (Steam relaunches the game with
+     * `+connect_lobby <id>`) and party members show grouped. Call it again with
+     * no lobbyId once the room is gone, or friends keep seeing a stale Join.
+     */
+    setPresence:        (presence) => window.steam?.setPresence?.(presence) ?? Promise.resolve(false),
+    clearPresence:      () => window.steam?.clearPresence?.() ?? Promise.resolve(),
     quit:               () => window.steam?.quit() ?? Promise.resolve(),
 };
 

@@ -980,6 +980,39 @@ ipcMain.handle('steam:lobbyMergeFullData', (_e, data) => {
 ipcMain.handle('steam:lobbySetJoinable', (_e, flag) =>
     currentLobbyId ? steam.matchmaking.setLobbyJoinable(currentLobbyId, !!flag) : false);
 
+/**
+ * Rich presence is what makes a friend see "In a lobby (2/4)" with a working
+ * Join Game button, without either player opening the overlay. Three keys carry
+ * it: `connect` is the launch argument Steam hands the joining client (the same
+ * +connect_lobby the runtime already parses), `status` is the human-readable
+ * line, and steam_player_group makes party members appear grouped in the list.
+ * Passing null for a key clears it — presence must go away when the lobby does,
+ * or friends keep seeing a Join button for a game that is no longer joinable.
+ */
+ipcMain.handle('steam:setPresence', (_e, presence) => {
+    if (!steam?.richPresence) return false;
+    const { status, lobbyId, groupSize } = presence ?? {};
+    try {
+        steam.richPresence.setRichPresence('status', status ?? null);
+        steam.richPresence.setRichPresence('connect', lobbyId ? `+connect_lobby ${lobbyId}` : null);
+        steam.richPresence.setRichPresence('steam_player_group', lobbyId ?? null);
+        steam.richPresence.setRichPresence(
+            'steam_player_group_size',
+            lobbyId && groupSize ? String(groupSize) : null,
+        );
+        return true;
+    } catch (e) {
+        console.warn('[Steam] setRichPresence failed:', e.message);
+        return false;
+    }
+});
+
+ipcMain.handle('steam:clearPresence', () => {
+    try {
+        steam?.richPresence?.clearRichPresence();
+    } catch { /* nothing to clear */ }
+});
+
 ipcMain.handle('steam:takePendingLobby', () => {
     const id = pendingConnectLobby;
     pendingConnectLobby = null;

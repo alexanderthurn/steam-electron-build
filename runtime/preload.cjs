@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('steam', {
     quit:                    () => ipcRenderer.invoke('steam:quit'),
     activateOverlay:         (dialog) => ipcRenderer.invoke('steam:activateOverlay', dialog || 'Friends'),
     openStore:               () => ipcRenderer.invoke('steam:openStore'),
+    setPresence:             (presence) => ipcRenderer.invoke('steam:setPresence', presence),
+    clearPresence:           () => ipcRenderer.invoke('steam:clearPresence'),
     unlockAchievement:       (id) => ipcRenderer.invoke('steam:unlockAchievement', id),
     getUnlockedAchievements: (ids) => ipcRenderer.invoke('steam:getUnlockedAchievements', ids),
     getStatI32:              (name) => ipcRenderer.invoke('steam:getStatI32', name),
