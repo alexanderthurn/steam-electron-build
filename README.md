@@ -43,7 +43,7 @@ Extracted from a shipped Steam game ([DICEPTION](https://store.steampowered.com/
 
 ## Try the example
 
-A PixiJS v8 demo lives in [`example/`](example): up to 4 players move circles with gamepads (keyboard fallback: WASD / arrows), `F` fullscreen, `Space` unlocks a test achievement.
+A PixiJS v8 demo lives in [`example/`](example): up to 4 players move circles with gamepads (keyboard fallback: WASD / arrows), `F` fullscreen, `Esc` closes the window, `Space` unlocks a test achievement.
 
 ```bash
 npm install      # the package's own deps (only needed for the file:.. link)

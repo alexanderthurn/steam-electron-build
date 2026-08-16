@@ -1,10 +1,10 @@
 /**
  * Demo game: up to 4 players move circles with gamepads.
  * Keyboard fallback: player 1 = WASD, player 2 = arrow keys.
- * F = fullscreen, Space = unlock test achievement (Spacewar app 480).
+ * F = fullscreen, Esc = close window, Space = unlock test achievement (Spacewar app 480).
  */
 import { Application, Graphics, Text } from 'pixi.js';
-import { steam, toggleFullscreen } from 'steam-electron-build/native';
+import { steam, toggleFullscreen, win } from 'steam-electron-build/native';
 
 const PLAYER_COLORS = [0x00ffff, 0xaa00ff, 0xffe000, 0x00ff66];
 const RADIUS = 32;
@@ -41,6 +41,7 @@ window.addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
 
 window.addEventListener('keydown', (e) => {
     if (e.key.toLowerCase() === 'f') toggleFullscreen();
+    if (e.key === 'Escape') win.close();
     if (e.key === ' ') {
         steam.unlockAchievement('ACH_WIN_ONE_GAME'); // exists on Spacewar (480)
         status.text += '  [achievement sent]';
@@ -91,5 +92,5 @@ app.stage.addChild(status);
 
 const name = await steam.getUserName();
 status.text = steam.isAvailable() && name
-    ? `Steam: ${name}  |  connect gamepads to join  |  F fullscreen, Space achievement, Shift+Tab overlay`
+    ? `Steam: ${name}  |  connect gamepads to join  |  F fullscreen, Esc quit, Space achievement, Shift+Tab overlay`
     : 'Browser mode (no Steam)  |  connect gamepads to join  |  P1 WASD, P2 arrows, F fullscreen';
