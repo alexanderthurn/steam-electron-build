@@ -46,6 +46,8 @@ contextBridge.exposeInMainWorld('electronWin', {
     close:             ()     => ipcRenderer.invoke('win:close'),
     setFullscreen:     (flag) => ipcRenderer.invoke('win:setFullscreen', flag),
     isFullscreen:      ()     => ipcRenderer.invoke('win:isFullscreen'),
+    setUiScale:        (f)    => ipcRenderer.invoke('win:setUiScale', f),
+    getUiScale:        ()     => ipcRenderer.invoke('win:getUiScale'),
     setPosition:       (pos)  => ipcRenderer.invoke('win:setPosition', pos),
     setSize:           (size) => ipcRenderer.invoke('win:setSize', size),
     outerPosition:     ()     => ipcRenderer.invoke('win:outerPosition'),

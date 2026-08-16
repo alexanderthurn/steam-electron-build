@@ -465,12 +465,16 @@ function usableBounds(saved) {
 
 const UI_SCALE_REF = { width: 1280, height: 800 };
 
+/** Player-chosen multiplier on top of the automatic factor (1 = untouched). */
+let uiScaleUser = 1;
+
 function applyUiZoom() {
     if (cfg.uiScale === false) return;   // opt out: game handles its own scaling
     if (!mainWin || mainWin.isDestroyed()) return;
     const { width, height } = mainWin.getContentBounds();
     if (!width || !height) return;
-    const scale = Math.max(1, Math.min(width / UI_SCALE_REF.width, height / UI_SCALE_REF.height));
+    const auto = Math.max(1, Math.min(width / UI_SCALE_REF.width, height / UI_SCALE_REF.height));
+    const scale = auto * uiScaleUser;
     const rounded = Math.round(scale * 100) / 100;
     try {
         if (mainWin.webContents.getZoomFactor() !== rounded) {
@@ -891,6 +895,14 @@ ipcMain.handle('storage:getPath', (_e, file) =>
 
 ipcMain.handle('win:close',          () => mainWin?.close());
 ipcMain.handle('win:setFullscreen',  (_e, flag) => mainWin?.setFullScreen(flag));
+// Player's UI-size multiplier. Kept out of the auto factor so a display change
+// still rescales correctly underneath whatever the player picked.
+ipcMain.handle('win:setUiScale',      (_e, factor) => {
+    const f = Number(factor);
+    uiScaleUser = Number.isFinite(f) && f > 0 ? Math.min(3, Math.max(0.5, f)) : 1;
+    applyUiZoom();
+});
+ipcMain.handle('win:getUiScale',      () => uiScaleUser);
 ipcMain.handle('win:isFullscreen',   () => mainWin?.isFullScreen() ?? false);
 ipcMain.handle('win:setPosition',    (_e, pos) => mainWin?.setPosition(Math.round(pos.x), Math.round(pos.y)));
 ipcMain.handle('win:setSize',        (_e, sz)  => mainWin?.setSize(Math.round(sz.width), Math.round(sz.height)));

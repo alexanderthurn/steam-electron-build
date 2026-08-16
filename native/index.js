@@ -67,6 +67,9 @@ export const net = {
 export const win = {
     setFullscreen: (flag) => window.electronWin?.setFullscreen(flag) ?? Promise.resolve(),
     isFullscreen:  () => window.electronWin?.isFullscreen() ?? Promise.resolve(false),
+    /** Multiplier on the automatic high-DPI zoom — 1 leaves it as computed. */
+    setUiScale:    (factor) => window.electronWin?.setUiScale?.(factor) ?? Promise.resolve(),
+    getUiScale:    () => window.electronWin?.getUiScale?.() ?? Promise.resolve(1),
     close:         () => window.electronWin?.close() ?? Promise.resolve(),
 };
 

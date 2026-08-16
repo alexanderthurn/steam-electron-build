@@ -215,6 +215,13 @@ while the 3D canvas is unaffected. The page is zoomed to a 1280x800 reference,
 never below 1 — so 3840x2160 gets 2.7x, 1920x1080 gets 1.35x, and a 1280x800
 Steam Deck gets 1x. Set `"uiScale": false` if your game scales itself.
 
+Games can offer this as a player setting: `win.setUiScale(1.25)` multiplies the
+automatic factor, so the display-derived part still adapts underneath whatever
+the player picked. Pair it with a render-scale setting expressed as a *fraction
+of native* (`devicePixelRatio × fraction`) — a `devicePixelRatio` **cap** instead
+makes the two interfere, because enlarging the UI shrinks the CSS viewport and
+would silently lower the 3D resolution.
+
 Chromium's zoom applies beneath the coordinate system, so pointer coordinates,
 `getBoundingClientRect` and `devicePixelRatio` stay consistent. A CSS transform
 on `<body>` looks the same but desyncs element rects from canvas pixels, which
