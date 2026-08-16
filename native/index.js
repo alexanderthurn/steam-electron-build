@@ -73,6 +73,10 @@ export const win = {
     close:         () => window.electronWin?.close() ?? Promise.resolve(),
     /** true when launched with steamworks-ffi-node's mirrored native overlay */
     isNativeOverlay: () => !!window.electronWin?.isNativeOverlay?.(),
+    /** { requested, attached, available, platform, error } — for overlay probe HUD */
+    nativeOverlayStatus: () => window.electronWin?.nativeOverlayStatus?.()
+        ?? Promise.resolve({ requested: false, attached: false, available: null, platform: null, error: null }),
+    onNativeOverlayStatus: (cb) => window.electronWin?.onNativeOverlayStatus?.(cb),
     onMoved:       (cb) => window.electronWin?.onMoved?.(cb),
     onResized:     (cb) => window.electronWin?.onResized?.(cb),
 };

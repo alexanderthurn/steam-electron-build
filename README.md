@@ -26,19 +26,15 @@ registry package.
 
 Uses **[steamworks-ffi-node](https://github.com/ArtyProf/steamworks-ffi-node)** (Steamworks SDK **1.64** redistributables) for lobbies, achievements/stats, and modern **ISteamNetworkingSockets** P2P.
 
-Steam Overlay: Shift+Tab uses the **programmatic** API (`activateOverlay()` /
-Friends / invite / store). That is what this package ships and what players
-need.
+Steam Overlay: games should use the **programmatic** API (`activateOverlay()` /
+Friends / invite / store) — Shift+Tab via that path is what `npm run friends`
+exercises. That is the reliable path on macOS today (see status below).
 
-steamworks-ffi-node also offers a **native mirror** (`addElectronSteamOverlay`) —
-a second **borderless** Metal/GL window that copies Electron frames so Steam can
-inject, because Chromium itself cannot host the injector
-([their write-up](https://dev.to/arty_prof/steamworks-ffi-node-a-steamworks-sdk-library-for-javascript-game-frameworks-15h1)).
-That borderless second window is required by that design; there is no framed
-single-window option. On macOS the mirror sits offset under Electron and
-Shift+Tab is unreliable, so **`dev --overlay` is ignored on macOS** and falls
-back to programmatic Friends. On Windows/Linux you can still opt in with
-`steam-electron-build dev --overlay` to compare FPS cost — not a default ship path.
+steamworks-ffi-node also has a **native mirror** (`addElectronSteamOverlay`): a
+second **borderless** Metal/GL window that copies Electron frames so Steam can
+inject ([write-up](https://dev.to/arty_prof/steamworks-ffi-node-a-steamworks-sdk-library-for-javascript-game-frameworks-15h1)).
+That second window is required by the design. The example’s `npm run overlay`
+turns it on on every OS as a **probe** — not the default ship path.
 
 Extracted from a shipped Steam game ([DICEPTION](https://store.steampowered.com/app/3689240/)), so the annoying parts are already solved:
 
@@ -54,18 +50,34 @@ Extracted from a shipped Steam game ([DICEPTION](https://store.steampowered.com/
 
 ## Try the example
 
-A PixiJS v8 demo lives in [`example/`](example): FPS HUD (smoothed), fullscreen
-plasma shader + heavy per-entity glow/blur entities, up to 4 players (WASD /
-arrows / gamepads), `=/+` spawn and `-` despawn, `F` fullscreen, `Esc` quit,
-`Space` achievement.
+A PixiJS v8 demo in [`example/`](example) is the **Steam overlay probe** for this
+machine: FPS HUD, plasma background, mouse-swarm orbs (`=/+` / `-`), reactor-style
+players, key legend bottom-left.
+
+![Example demo (friends mode) — plasma, P1 reactor, blurred orb swarm](example/michaelblurry.jpg)
 
 ```bash
 npm install      # the package's own deps (only needed for the file:.. link)
 cd example
 npm install
-npm run friends  # programmatic Friends overlay (Shift+Tab) — use this on macOS
-npm run overlay  # native mirror (Win/Linux); on macOS falls back to friends
+npm run friends  # programmatic Friends (activateOverlay on Shift+Tab)
+npm run overlay  # native Metal/GL mirror probe on this OS (incl. macOS)
 ```
+
+### macOS status (2026-08-16)
+
+Tested with **steamworks-ffi-node 0.11.1**, Electron from this package, Steam
+running, Spacewar (480):
+
+| Path | Command | What you get on Mac today |
+|---|---|---|
+| **Friends (ship path)** | `npm run friends` | Works. One normal Electron window. Shift+Tab → programmatic Friends via `activateOverlay()`. Steam identity, achievements, FPS stress demo all fine. **Use this for real games.** |
+| **Native overlay (probe)** | `npm run overlay` | Probe only. ffi-node attaches a **second borderless Metal mirror** (required — Chromium cannot host Steam’s injector). On Mac that mirror often sits **offset under** the Electron window (“two textures”), and **Shift+Tab does not reliably open** the injected overlay when launched via `npm run`. Older 0.10.x capture paths also hit `No texture… texture=0x0`; 0.11.x feeds frames better but does not fix Mac Shift+Tab / dual-window UX. |
+
+So on macOS: **friends = supported**, **overlay = diagnostic** (see if *this* machine’s stack attaches; do not treat a green `ATTACH ok` as “players get a good Shift+Tab”). Windows/Linux may fare better on the mirror path; still not the default ship recommendation.
+
+In overlay mode the HUD reports whether `addElectronSteamOverlay` **attached**.
+Expect a second borderless mirror — that is the surface Steam would inject into.
 
 ## Using it in your game
 

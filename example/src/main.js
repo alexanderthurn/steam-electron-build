@@ -317,13 +317,9 @@ function keyboardAxis(p, index) {
 
 const nativeMode = win.isNativeOverlay();
 const modeLabel = nativeMode ? 'overlay' : 'friends';
-const modeDetail = nativeMode
-    ? 'native Steam mirror (borderless 2nd window)'
-    : 'programmatic Friends via activateOverlay';
-const otherCmd = nativeMode
-    ? 'npm run friends'
-    : 'npm run overlay (Win/Linux only; macOS stays on friends)';
-const shiftTabLabel = nativeMode ? 'Overlay' : 'Friends';
+let attachLine = nativeMode ? 'ATTACH  waiting…' : 'ATTACH  n/a (friends mode)';
+const otherCmd = nativeMode ? 'npm run friends' : 'npm run overlay';
+const shiftTabLabel = nativeMode ? 'Overlay (probe)' : 'Friends';
 let hintFlashUntil = 0;
 let fpsDisplay = 0;
 let msDisplay = 0;
@@ -371,12 +367,34 @@ const steamLine = steam.isAvailable() && name
 
 function refreshHud() {
     const ach = performance.now() < hintFlashUntil ? '  [achievement sent]' : '';
-    hud.text = [
-        `MODE  ${modeLabel}  —  ${modeDetail}`,
-        `other ${otherCmd}`,
+    const lines = [
+        `PROBE  ${modeLabel}  —  ${nativeMode ? 'native mirror on this machine' : 'programmatic activateOverlay'}`,
+        `other  ${otherCmd}`,
+        attachLine,
         `FPS ${fpsDisplay}   ${msDisplay}ms   orbs ${entities.length}${ach}`,
         steamLine,
-    ].join('\n');
+    ];
+    hud.text = lines.join('\n');
+}
+
+function applyOverlayStatus(status) {
+    if (!status?.requested) {
+        attachLine = 'ATTACH  n/a (friends mode)';
+    } else if (status.attached) {
+        attachLine = `ATTACH  ok  (${status.platform})  —  try Shift+Tab`;
+    } else if (status.error) {
+        attachLine = `ATTACH  FAIL  ${status.error}`;
+    } else if (status.available === false) {
+        attachLine = 'ATTACH  FAIL  isOverlayAvailable() false';
+    } else {
+        attachLine = 'ATTACH  waiting…';
+    }
+    refreshHud();
+}
+
+if (nativeMode) {
+    win.nativeOverlayStatus().then(applyOverlayStatus);
+    win.onNativeOverlayStatus?.(applyOverlayStatus);
 }
 
 spawnEntities(START_ENTITIES);

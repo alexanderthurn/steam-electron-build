@@ -60,6 +60,9 @@ contextBridge.exposeInMainWorld('electronWin', {
     onResized:         (cb)   => ipcRenderer.on('win:resized', (_e, data) => cb(data)),
     /** true when launched with native frame-mirrored Steam overlay */
     isNativeOverlay:   ()     => nativeOverlay,
+    /** probe: { requested, attached, available, platform, error } */
+    nativeOverlayStatus: ()   => ipcRenderer.invoke('win:nativeOverlayStatus'),
+    onNativeOverlayStatus: (cb) => ipcRenderer.on('win:nativeOverlayStatus', (_e, data) => cb(data)),
 });
 
 // ── Storage ───────────────────────────────────────────────────────────────────

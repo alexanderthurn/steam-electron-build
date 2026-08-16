@@ -311,12 +311,8 @@ const OS_SHORTCUTS = ['mac', 'win', 'linux'];
 
 if (cmd === 'dev') {
     if (wantNativeOverlay) {
-        if (process.platform === 'darwin') {
-            console.warn('steam-electron-build: --overlay ignored on macOS (borderless dual-window mirror; use friends mode)');
-        } else {
-            process.env.STEAM_ELECTRON_NATIVE_OVERLAY = '1';
-            console.log('steam-electron-build: native Steam overlay mirror enabled (--overlay)');
-        }
+        process.env.STEAM_ELECTRON_NATIVE_OVERLAY = '1';
+        console.log('steam-electron-build: native Steam overlay probe enabled (--overlay)');
     }
     dev(cfg);
 } else if (cmd === 'build' || OS_SHORTCUTS.includes(cmd)) {
@@ -327,7 +323,7 @@ if (cmd === 'dev') {
 
 Usage:
   steam-electron-build dev            run the game in Electron (Steam works if the client is running)
-  steam-electron-build dev --overlay  native mirror (Win/Linux; ignored on macOS)
+  steam-electron-build dev --overlay  native mirror probe (all platforms)
   steam-electron-build build <os>     depot-ready build in dist-electron/<os>   (mac | win | linux)
   steam-electron-build <os>           shorthand for build <os>
 

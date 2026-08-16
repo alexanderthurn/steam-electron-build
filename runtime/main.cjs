@@ -17,19 +17,22 @@ const lanEnabled = cfg.lan === true;
 
 // Opt-in frame-mirrored Steam overlay (steamworks-ffi-node addElectronSteamOverlay).
 // Default stays off — use STEAM_ELECTRON_NATIVE_OVERLAY=1 or `dev --overlay`.
-// Disabled on macOS: ffi-node's path is a second *borderless* Metal window that
-// Steam injects into. On Mac that mirror sits offset under Electron, Shift+Tab
-// does not reliably open, and a framed single-window alternative does not exist
-// (Chromium cannot host Steam's injector).
-let nativeOverlayEnabled = process.env.STEAM_ELECTRON_NATIVE_OVERLAY === '1'
+// This is a probe path (see example/): Chromium cannot host Steam's injector, so
+// ffi-node opens a second borderless Metal/GL mirror window. Enable it on every
+// OS so you can see whether the current stack works on this machine.
+const nativeOverlayEnabled = process.env.STEAM_ELECTRON_NATIVE_OVERLAY === '1'
     || cfg.nativeOverlay === true;
-if (nativeOverlayEnabled && process.platform === 'darwin') {
-    console.warn('[Steam] Native overlay mirror is not enabled on macOS (borderless dual-window; Shift+Tab unreliable).');
-    console.warn('[Steam] Using programmatic Friends overlay instead — Shift+Tab → activateOverlay().');
-    nativeOverlayEnabled = false;
-}
 if (nativeOverlayEnabled) process.env.STEAM_ELECTRON_NATIVE_OVERLAY = '1';
 else delete process.env.STEAM_ELECTRON_NATIVE_OVERLAY;
+
+/** Probe status for the example HUD — requested vs actually attached. */
+const nativeOverlayStatus = {
+    requested: nativeOverlayEnabled,
+    attached: false,
+    available: null,
+    platform: process.platform,
+    error: null,
+};
 
 const indexHtml = process.env.STEAM_ELECTRON_BUILD_CONFIG
     ? path.join(cfg.distDir, 'index.html')
@@ -605,12 +608,23 @@ function createWindow() {
 /** Attach steamworks-ffi-node's mirrored native overlay when opted in. */
 let nativeOverlayAttached = false;
 function maybeAttachNativeOverlay() {
-    if (nativeOverlayAttached || !nativeOverlayEnabled || !steam || !mainWin || mainWin.isDestroyed()) return;
-    if (typeof steam.isOverlayAvailable !== 'function' || !steam.isOverlayAvailable()) {
-        console.warn('[Steam] Native overlay requested but isOverlayAvailable() is false');
+    if (nativeOverlayAttached || !nativeOverlayEnabled || !mainWin || mainWin.isDestroyed()) return;
+    if (!steam) {
+        nativeOverlayStatus.error = 'Steam not initialized';
+        console.warn('[Steam] Native overlay requested but Steam is not initialized');
+        safeSend('win:nativeOverlayStatus', { ...nativeOverlayStatus });
         return;
     }
-    // Mirror window + Electron fullscreen = two stacked desktops on macOS.
+    if (typeof steam.isOverlayAvailable !== 'function' || !steam.isOverlayAvailable()) {
+        nativeOverlayStatus.available = false;
+        nativeOverlayStatus.error = 'isOverlayAvailable() is false';
+        console.warn('[Steam] Native overlay requested but isOverlayAvailable() is false');
+        safeSend('win:nativeOverlayStatus', { ...nativeOverlayStatus });
+        return;
+    }
+    nativeOverlayStatus.available = true;
+
+    // Mirror + fullscreen stacks two desktops on macOS — keep windowed for the probe.
     if (mainWin.isFullScreen()) {
         mainWin.setFullScreen(false);
     }
@@ -632,16 +646,22 @@ function maybeAttachNativeOverlay() {
                 fps: 60,
                 vsync: true,
             });
+            nativeOverlayStatus.attached = !!ok;
+            nativeOverlayStatus.error = ok ? null : 'addElectronSteamOverlay returned false';
             if (ok) nativeOverlayAttached = true;
             console.log(ok
-                ? '[Steam] Native overlay attached (Metal/GL mirror — Shift+Tab injects there)'
+                ? `[Steam] Native overlay ATTACHED on ${process.platform} — press Shift+Tab to test injection`
                 : '[Steam] Native overlay attach returned false');
-            if (ok && process.platform === 'darwin') {
-                console.log('[Steam] macOS: Electron stays for input; the borderless Metal window is what Steam hooks.');
-                console.log('[Steam] If Shift+Tab is dead: add this build as a non-Steam game, restart Steam, launch from Steam.');
+            if (ok) {
+                console.log('[Steam] Expect a second borderless Metal/GL mirror (required by ffi-node).');
+                console.log('[Steam] If Shift+Tab does nothing: add this binary as a non-Steam game, restart Steam, launch from Steam.');
             }
+            safeSend('win:nativeOverlayStatus', { ...nativeOverlayStatus });
         } catch (e) {
+            nativeOverlayStatus.attached = false;
+            nativeOverlayStatus.error = e.message;
             console.warn('[Steam] Native overlay failed:', e.message);
+            safeSend('win:nativeOverlayStatus', { ...nativeOverlayStatus });
         }
     };
 
@@ -990,6 +1010,7 @@ ipcMain.handle('win:setUiScale',      (_e, factor) => {
 });
 ipcMain.handle('win:getUiScale',      () => uiScaleUser);
 ipcMain.handle('win:isFullscreen',   () => mainWin?.isFullScreen() ?? false);
+ipcMain.handle('win:nativeOverlayStatus', () => ({ ...nativeOverlayStatus }));
 ipcMain.handle('win:setPosition',    (_e, pos) => mainWin?.setPosition(Math.round(pos.x), Math.round(pos.y)));
 ipcMain.handle('win:setSize',        (_e, sz)  => mainWin?.setSize(Math.round(sz.width), Math.round(sz.height)));
 ipcMain.handle('win:outerPosition',  () => { const [x, y] = mainWin?.getPosition() ?? [0, 0]; return { x, y }; });
