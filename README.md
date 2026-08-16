@@ -156,6 +156,7 @@ All optional, in your `package.json`:
   "extend": "steam-electron-build.extend.cjs",  // optional main-process hook, see below
   "macUniversal": false,             // build mac as x64+arm64 so Intel Macs work (default false)
   "fullscreen": true,                // first-launch window mode (default true)
+  "uiScale": true,                   // false disables high-DPI page zoom (default on)
   "lan": false,                      // opt-in LAN PeerServer + UDP discovery (default false)
   "lanDiscoveryPort": 41234          // optional; only used when lan is true
 }
@@ -206,6 +207,23 @@ Depot mapping follows the steam-deploy convention: depot ids appid+1 (win), +2 (
 2. Set `steamAppId` in your `steamElectronBuild` config
 3. Add the workflow + secrets above
 4. `git tag v1.0.0 && git push --tags`
+
+## High-DPI UI scaling
+
+A 4K display with OS scaling at 100% renders HTML UI at tiny physical sizes
+while the 3D canvas is unaffected. The page is zoomed to a 1280x800 reference,
+never below 1 — so 3840x2160 gets 2.7x, 1920x1080 gets 1.35x, and a 1280x800
+Steam Deck gets 1x. Set `"uiScale": false` if your game scales itself.
+
+Chromium's zoom applies beneath the coordinate system, so pointer coordinates,
+`getBoundingClientRect` and `devicePixelRatio` stay consistent. A CSS transform
+on `<body>` looks the same but desyncs element rects from canvas pixels, which
+silently breaks pointer-to-world math in games that subtract a rect origin
+without dividing by the scale.
+
+The canvas sizes to the zoomed viewport, so its backing store is
+`cssSize x devicePixelRatio`. A game capping DPR below the zoom factor renders
+below native resolution — sharper UI, slightly softer 3D.
 
 ## Window state
 

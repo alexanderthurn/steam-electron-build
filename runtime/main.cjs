@@ -448,6 +448,37 @@ function usableBounds(saved) {
     };
 }
 
+// ── High-DPI UI scaling ───────────────────────────────────────────────────────
+// On a 4K display with OS scaling at 100% (common on Windows), HTML UI renders
+// at tiny physical sizes while the 3D canvas is unaffected. Scale the page to a
+// 1280x800 reference, never below 1 — the same policy DICEPTION uses.
+//
+// Chromium's zoom applies beneath the coordinate system, so layout, pointer
+// coordinates, getBoundingClientRect and devicePixelRatio stay consistent with
+// each other. A CSS transform on <body> achieves the same look but desyncs
+// element rects from canvas pixels, which silently breaks pointer-to-world math
+// in games that subtract rect origins without dividing by the scale.
+//
+// Trade-off: the canvas now sizes to the zoomed (smaller) CSS viewport, so the
+// 3D backing store is cssSize x devicePixelRatio. Games capping DPR below the
+// zoom factor render below native resolution — sharper UI, slightly softer 3D.
+
+const UI_SCALE_REF = { width: 1280, height: 800 };
+
+function applyUiZoom() {
+    if (cfg.uiScale === false) return;   // opt out: game handles its own scaling
+    if (!mainWin || mainWin.isDestroyed()) return;
+    const { width, height } = mainWin.getContentBounds();
+    if (!width || !height) return;
+    const scale = Math.max(1, Math.min(width / UI_SCALE_REF.width, height / UI_SCALE_REF.height));
+    const rounded = Math.round(scale * 100) / 100;
+    try {
+        if (mainWin.webContents.getZoomFactor() !== rounded) {
+            mainWin.webContents.setZoomFactor(rounded);
+        }
+    } catch { /* window torn down mid-resize */ }
+}
+
 // ── Window ────────────────────────────────────────────────────────────────────
 
 let mainWin = null;
@@ -495,6 +526,8 @@ function createWindow() {
     mainWin.setMenuBarVisibility(false);
 
     mainWin.loadFile(indexHtml);
+    // Zoom must be re-applied per load: it is a property of the loaded frame.
+    mainWin.webContents.on('did-finish-load', applyUiZoom);
 
     // Remember geometry only while windowed — capturing bounds in fullscreen or
     // maximized would save the screen size and lose the restore size.
@@ -519,9 +552,9 @@ function createWindow() {
     };
 
     mainWin.on('move',   () => { safeSend('win:moved'); scheduleRemember(); });
-    mainWin.on('resize', () => { safeSend('win:resized'); scheduleRemember(); });
-    mainWin.on('enter-full-screen', rememberWindowState);
-    mainWin.on('leave-full-screen', rememberWindowState);
+    mainWin.on('resize', () => { safeSend('win:resized'); scheduleRemember(); applyUiZoom(); });
+    mainWin.on('enter-full-screen', () => { rememberWindowState(); applyUiZoom(); });
+    mainWin.on('leave-full-screen', () => { rememberWindowState(); applyUiZoom(); });
     mainWin.on('close', () => {
         if (saveTimer) clearTimeout(saveTimer);
         rememberWindowState();
