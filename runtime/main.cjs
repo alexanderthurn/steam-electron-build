@@ -763,29 +763,30 @@ ipcMain.handle('steam:getUserName', () =>
 ipcMain.handle('steam:getSteamId', () =>
     String(steam?.getStatus?.().steamId ?? '0'));
 
-ipcMain.handle('steam:getAvatarDataUrl', async () => {
-    if (!steam) return null;
+/**
+ * Avatar for ANY steamId64 (the local user or a friend) as a data URL.
+ *
+ * `waitFrames` pumps callbacks while Steam loads the image into its cache —
+ * worth it for the local user (one call, at startup), pointless per row in a
+ * friends list, where an uncached avatar simply arrives on a later refresh.
+ */
+async function avatarDataUrlFor(steamId64, waitFrames = 20) {
+    if (!steam || !steamId64 || steamId64 === '0') return null;
     try {
-        const steamId64 = String(steam.getStatus?.().steamId ?? '');
-        if (!steamId64 || steamId64 === '0') return null;
-
         // Prefer native Steam image cache (no network). Avatar may need a
         // few frames to load into the cache after the first request.
         let handle = 0;
-        for (let i = 0; i < 20; i++) {
+        for (let i = 0; i < Math.max(1, waitFrames); i++) {
             handle = steam.friends.getLargeFriendAvatar(steamId64)
                 || steam.friends.getMediumFriendAvatar(steamId64)
                 || 0;
-            if (handle > 0) break;
+            if (handle > 0 || waitFrames <= 1) break;
             steam.runCallbacks();
             await new Promise((r) => setTimeout(r, 50));
         }
         if (handle > 0) {
             const rgba = steam.utils.getImageRGBA(handle);
             if (rgba?.data?.length) {
-                // Encode raw RGBA as an uncompressed BMP-ish PNG via a tiny data URL
-                // using Electron-available canvas is unavailable in main — fall through
-                // to community CDN if we cannot PNG-encode. Use a minimal PNG encoder:
                 return rgbaToPngDataUrl(rgba.width, rgba.height, rgba.data) ?? null;
             }
         }
@@ -810,6 +811,56 @@ ipcMain.handle('steam:getAvatarDataUrl', async () => {
     } catch (e) {
         console.warn('[Steam] Avatar fetch failed:', e instanceof Error ? e.message : e);
         return null;
+    }
+}
+
+ipcMain.handle('steam:getAvatarDataUrl', () =>
+    avatarDataUrlFor(String(steam?.getStatus?.().steamId ?? '')));
+
+ipcMain.handle('steam:friendAvatar', (_e, steamId64) =>
+    avatarDataUrlFor(String(steamId64 ?? ''), 1));
+
+/**
+ * The player's Steam friends, with a flag for those in THIS game right now.
+ *
+ * Steam has no "does my friend own my app" API — ownership is private — so
+ * `inThisGame` is the closest signal there is, and anyone can be invited
+ * regardless: Steam decides whether they can act on it.
+ */
+ipcMain.handle('steam:friendsList', () => {
+    if (!steam) return [];
+    try {
+        const appId = Number(steam.utils.getAppID?.() ?? 0);
+        return (steam.friends.getAllFriends() ?? []).map((f) => {
+            const steamId64 = String(f.steamId);
+            let inThisGame = false;
+            try {
+                const played = steam.friends.getFriendGamePlayed(steamId64);
+                inThisGame = !!played?.gameId && Number(played.gameId) === appId;
+            } catch { /* friend's state not loaded yet */ }
+            return {
+                steamId64,
+                name: String(f.personaName ?? ''),
+                // EPersonaState: 0 offline, 1 online, 2 busy, 3 away, 4 snooze,
+                // 5 looking to trade, 6 looking to play
+                state: Number(f.personaState ?? 0),
+                inThisGame,
+            };
+        });
+    } catch (e) {
+        console.warn('[Steam] friendsList failed:', e.message);
+        return [];
+    }
+});
+
+/** Direct lobby invite — no overlay involved. false = we could not send it. */
+ipcMain.handle('steam:lobbyInviteUser', (_e, steamId64) => {
+    if (!steam || !currentLobbyId) return false;
+    try {
+        return !!steam.matchmaking.inviteUserToLobby(currentLobbyId, String(steamId64));
+    } catch (e) {
+        console.warn('[Steam] inviteUserToLobby failed:', e.message);
+        return false;
     }
 });
 
@@ -1032,11 +1083,17 @@ ipcMain.handle('steam:takePendingLobby', () => {
 });
 
 ipcMain.handle('steam:lobbyOpenInviteDialog', () => {
-    if (!steam || !currentLobbyId) return;
+    // Returns whether the call was even made: with no lobby, or if the overlay
+    // refuses, this used to no-op silently and a caller could not tell that
+    // from success — so it told the player to pick a friend in a panel that
+    // never opened.
+    if (!steam || !currentLobbyId) return false;
     try {
         steam.overlay.activateGameOverlayInviteDialog(currentLobbyId);
+        return true;
     } catch (e) {
         console.warn('[Steam] openInviteDialog failed:', e.message);
+        return false;
     }
 });
 

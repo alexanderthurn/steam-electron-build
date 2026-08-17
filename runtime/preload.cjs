@@ -32,11 +32,16 @@ contextBridge.exposeInMainWorld('steam', {
         mergeFullData:     (data)             => ipcRenderer.invoke('steam:lobbyMergeFullData', data),
         setJoinable:       (flag)             => ipcRenderer.invoke('steam:lobbySetJoinable', flag),
         openInviteDialog:  ()                 => ipcRenderer.invoke('steam:lobbyOpenInviteDialog'),
+        inviteUser:        (steamId64)        => ipcRenderer.invoke('steam:lobbyInviteUser', steamId64),
         getLobbies:        ()                 => ipcRenderer.invoke('steam:lobbyGetLobbies'),
         /** lobby id from a `+connect_lobby` launch, once — null if none */
         takePendingJoin:   ()                 => ipcRenderer.invoke('steam:takePendingLobby'),
         onChatUpdate:      (cb) => ipcRenderer.on('steam:lobbyChatUpdate', (_e, data) => cb(data)),
         onJoinRequested:   (cb) => ipcRenderer.on('steam:lobbyJoinRequested', (_e, data) => cb(data)),
+    },
+    friends: {
+        list:   ()          => ipcRenderer.invoke('steam:friendsList'),
+        avatar: (steamId64) => ipcRenderer.invoke('steam:friendAvatar', steamId64),
     },
     net: {
         send:     (steamId64, payload) => ipcRenderer.invoke('steam:netSend', steamId64, payload),

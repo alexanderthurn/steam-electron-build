@@ -54,7 +54,14 @@ export const lobby = {
     getFullData:      () => window.steam?.lobby.getFullData() ?? Promise.resolve({}),
     mergeFullData:    (data) => window.steam?.lobby.mergeFullData(data) ?? Promise.resolve(false),
     setJoinable:      (flag) => window.steam?.lobby.setJoinable(flag) ?? Promise.resolve(false),
-    openInviteDialog: () => window.steam?.lobby.openInviteDialog() ?? Promise.resolve(),
+    /**
+     * Steam's overlay friend picker for the current lobby. Resolves false when
+     * there is no lobby or the overlay refused — it used to no-op silently, so
+     * a caller could not tell "opened" from "nothing happened".
+     */
+    openInviteDialog: () => window.steam?.lobby.openInviteDialog() ?? Promise.resolve(false),
+    /** Invite one friend straight to the current lobby, no overlay. */
+    inviteUser: (steamId64) => window.steam?.lobby.inviteUser?.(steamId64) ?? Promise.resolve(false),
     getLobbies:       () => window.steam?.lobby.getLobbies() ?? Promise.resolve([]),
     /**
      * Lobby id from a "Join Game" invite that launched the app, or null.
@@ -67,6 +74,26 @@ export const lobby = {
     onChatUpdate:     (cb) => window.steam?.lobby.onChatUpdate(cb),
     /** fires when the user accepts a Steam overlay/friends-list "Join Game" invite */
     onJoinRequested:  (cb) => window.steam?.lobby.onJoinRequested(cb),
+};
+
+/**
+ * The player's Steam friends.
+ *
+ * Steam exposes no "does this friend own my app" API — ownership is private —
+ * so `inThisGame` (are they playing it right now) is the only ownership-ish
+ * signal available. Invite anyone regardless: Steam decides what they can do
+ * with it.
+ */
+export const friends = {
+    isAvailable: () => !!window.steam?.friends,
+    /** @returns {Promise<{steamId64: string, name: string, state: number, inThisGame: boolean}[]>} */
+    list: () => window.steam?.friends?.list() ?? Promise.resolve([]),
+    /**
+     * Avatar as a data URL, or null when Steam has not cached it yet — no
+     * waiting, so a list of rows stays responsive and late avatars simply
+     * appear on a later refresh.
+     */
+    avatar: (steamId64) => window.steam?.friends?.avatar(steamId64) ?? Promise.resolve(null),
 };
 
 export const net = {

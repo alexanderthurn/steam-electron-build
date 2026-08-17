@@ -134,6 +134,22 @@ net.onData(({ steamId64, data }) => console.log('from', steamId64, data));
 net.onClosed(({ steamId64, graceful }) => console.log('gone', steamId64, graceful));
 ```
 
+```js
+// The player's friends, and inviting one straight into your lobby
+import { friends, lobby } from 'steam-electron-build/native';
+
+for (const f of await friends.list()) {
+    // f = { steamId64, name, state, inThisGame }
+    if (await lobby.inviteUser(f.steamId64)) console.log('invited', f.name);
+}
+```
+
+`friends.list()` reports `inThisGame` (playing it right now) because Steam has
+no ownership API — who owns your app is private. Invite anyone regardless;
+Steam decides what they can do with it. `lobby.inviteUser()` needs no overlay,
+which matters because `lobby.openInviteDialog()` can only show friends Steam is
+willing to list — for a playtest or an unreleased app that is often nobody.
+
 `net.onClosed` lets you react the moment Steam reports a peer gone instead of
 waiting out your own keepalive — but it is a hint, not a complete disconnect
 signal. A hard kill (power loss, SIGKILL) produces no callback at all, so keep
