@@ -242,25 +242,30 @@ function createLan(opts) {
 
         room = { name, peerId, host, port, path: peerMount || '/peerjs', maxPlayers, data };
 
-        advertiseSock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-        advertiseSock.on('error', (err) => {
+        // Held locally as well as on `advertiseSock`, and it is the LOCAL one
+        // every handler and the timer below use: they belong to this host
+        // generation and must not start serving a later one just because the
+        // shared variable moved on (see stopHost).
+        const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+        advertiseSock = sock;
+        sock.on('error', (err) => {
             console.warn('[LAN] advertise socket error:', err.message);
         });
-        advertiseSock.on('message', (msg, rinfo) => {
+        sock.on('message', (msg, rinfo) => {
             const parsed = decodeMsg(msg);
             if (!parsed || parsed.appId !== appId) return;
-            if (parsed.t === 'query') sendAnnounce(advertiseSock, rinfo.address, rinfo.port);
+            if (parsed.t === 'query') sendAnnounce(sock, rinfo.address, rinfo.port);
         });
         try {
             await new Promise((resolve, reject) => {
-                advertiseSock.once('error', reject);
-                advertiseSock.bind(discoveryPort, () => {
+                sock.once('error', reject);
+                sock.bind(discoveryPort, () => {
                     try {
-                        advertiseSock.setBroadcast(true);
+                        sock.setBroadcast(true);
                     } catch {
                         /* some platforms */
                     }
-                    advertiseSock.off('error', reject);
+                    sock.off('error', reject);
                     resolve();
                 });
             });
@@ -270,35 +275,67 @@ function createLan(opts) {
             return null;
         }
 
-        sendAnnounce(advertiseSock);
-        announceTimer = setInterval(() => sendAnnounce(advertiseSock), ANNOUNCE_MS);
+        sendAnnounce(sock);
+        announceTimer = setInterval(() => sendAnnounce(sock), ANNOUNCE_MS);
 
         console.log(`[LAN] Hosting PeerServer ${host}:${port}${room.path} as "${name}" (${peerId})`);
         return getHostInfo();
     }
 
+    /**
+     * Tear down the current host.
+     *
+     * Every piece of shared state is detached SYNCHRONOUSLY up front, and the
+     * awaits below only ever touch the local references. That ordering is not
+     * cosmetic: closing the PeerServer waits for its existing connections —
+     * the host's own Peer WebSocket among them — so this function can stay
+     * suspended for as long as that takes. startHost() begins with
+     * `await stopHost()`, so a player who cancels a room and immediately
+     * hosts a new one used to have the new socket, server and room record
+     * assigned while an older stopHost() was still parked on those awaits;
+     * when it finally resumed it nulled the FRESH ones. The result was a host
+     * that looked open locally but announced nothing (announcePayload needs
+     * `room`), while its orphaned-yet-still-bound discovery socket also ate
+     * the replies that other machines' rooms sent back — so that player could
+     * neither be seen nor see anyone. Detaching first makes overlapping calls
+     * harmless: a second stop finds nothing to do, and a later start builds
+     * state no earlier stop still has a handle on.
+     */
     async function stopHost() {
-        if (announceTimer) {
-            clearInterval(announceTimer);
-            announceTimer = null;
-        }
-        if (advertiseSock) {
+        const timer = announceTimer;
+        const sock = advertiseSock;
+        const server = httpServer;
+        announceTimer = null;
+        advertiseSock = null;
+        httpServer = null;
+        room = null;
+
+        if (timer) clearInterval(timer);
+        if (sock) {
             await new Promise((resolve) => {
                 try {
-                    advertiseSock.close(() => resolve());
+                    sock.close(() => resolve());
                 } catch {
                     resolve();
                 }
             });
-            advertiseSock = null;
         }
-        if (httpServer) {
+        if (server) {
+            // close() alone only stops NEW connections and then waits for the
+            // live ones; the host's own Peer socket is still attached at this
+            // point, so without this the port stays bound until it goes away
+            // on its own and the next host has to pick a different one.
+            try {
+                server.closeAllConnections?.();
+            } catch { /* older Node: fall through to the plain close below */ }
             await new Promise((resolve) => {
-                httpServer.close(() => resolve());
+                try {
+                    server.close(() => resolve());
+                } catch {
+                    resolve();
+                }
             });
-            httpServer = null;
         }
-        room = null;
     }
 
     function updateHost(patch = {}) {
