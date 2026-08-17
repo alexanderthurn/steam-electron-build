@@ -86,14 +86,18 @@ function resolvePkgJson(name) {
 }
 
 /** Copy an npm package and its production dependency tree into destNodeModules. */
-function copyPackageTree(name, destNodeModules, seen = new Set()) {
+function copyPackageTree(name, destNodeModules, seen = new Set(), optional = false) {
     if (seen.has(name)) return;
     seen.add(name);
     let pkgJsonPath;
     try {
         pkgJsonPath = resolvePkgJson(name);
     } catch {
-        console.warn(`steam-electron-build: optional dep "${name}" not found — skipped`);
+        // A missing OPTIONAL dep is the normal case, not a warning: a
+        // prebuilt-binary package lists every platform it supports and npm
+        // installs only this one, so ~14 of koffi's 15 natives are absent by
+        // design. Shouting about those would bury a real missing dependency.
+        if (!optional) console.warn(`steam-electron-build: dep "${name}" not found — skipped`);
         return;
     }
     const from = path.dirname(pkgJsonPath);
@@ -101,10 +105,21 @@ function copyPackageTree(name, destNodeModules, seen = new Set()) {
     fs.mkdirSync(path.dirname(to), { recursive: true });
     fs.cpSync(from, to, { recursive: true });
     const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
-    for (const dep of Object.keys(pkg.dependencies ?? {})) {
-        // Skip optional native / peer-only noise that peer lists but we don't need at runtime
+    // optionalDependencies matter as much as dependencies here: that is where
+    // prebuilt-binary packages put their per-platform natives (koffi 3.x keeps
+    // its .node in @koromix/koffi-<platform>-<arch>, and koffi has no regular
+    // dependencies at all). Walking only `dependencies` shipped koffi's
+    // JavaScript with no native behind it, so Steam failed to load in every
+    // PACKAGED build — "Cannot find the native Koffi module" — while dev runs
+    // were fine, because those use the project's own complete node_modules.
+    // Only the current platform's package resolves; the rest are skipped by
+    // the not-found path above, which is exactly what should ship.
+    const optionalDeps = pkg.optionalDependencies ?? {};
+    const deps = { ...(pkg.dependencies ?? {}), ...optionalDeps };
+    for (const dep of Object.keys(deps)) {
+        // Skip peer-only noise that peer lists but we don't need at runtime
         if (dep.startsWith('@types/')) continue;
-        copyPackageTree(dep, destNodeModules, seen);
+        copyPackageTree(dep, destNodeModules, seen, dep in optionalDeps);
     }
 }
 
