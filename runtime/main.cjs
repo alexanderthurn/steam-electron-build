@@ -201,6 +201,18 @@ function initNetworking() {
             || change.newState === CONN_PROBLEM
         ) {
             forgetConnection(change.connection);
+            // Tell the renderer, not just ourselves. Without this the only
+            // evidence a peer is gone is that packets stop arriving, so a game
+            // has to wait out its own keepalive timeout before reacting to a
+            // quit Steam already told us about. A hard kill (power loss,
+            // SIGKILL) still produces no callback at all, so this shortens the
+            // common cases rather than replacing anyone's timeout.
+            if (steamId) {
+                safeSend('steam:p2pClosed', {
+                    steamId64: steamId,
+                    graceful: change.newState === CONN_CLOSED_BY_PEER,
+                });
+            }
         }
     });
 }

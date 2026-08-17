@@ -127,7 +127,18 @@ const openRooms = await lobby.getLobbies();
 // P2P: send any JSON-serializable payload to a member's steamId64
 await net.send(someSteamId64, { type: 'hello' });
 net.onData(({ steamId64, data }) => console.log('from', steamId64, data));
+
+// A peer's connection ended: `graceful` true = closed cleanly by them,
+// false = a problem detected locally (timeout, unreachable). Sending to
+// that steamId64 again just dials a new connection.
+net.onClosed(({ steamId64, graceful }) => console.log('gone', steamId64, graceful));
 ```
+
+`net.onClosed` lets you react the moment Steam reports a peer gone instead of
+waiting out your own keepalive — but it is a hint, not a complete disconnect
+signal. A hard kill (power loss, SIGKILL) produces no callback at all, so keep
+an application-level keepalive as the backstop and treat this as a speed-up
+for the common cases.
 
 Everything here is `undefined`/a safe no-op/an empty result in a plain
 browser too, same as the rest of this module — `lobby.isAvailable()` /

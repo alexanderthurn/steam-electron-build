@@ -75,6 +75,17 @@ export const net = {
     send:        (steamId64, payload) => window.steam?.net.send(steamId64, payload) ?? Promise.resolve(false),
     /** cb(({ steamId64, data }) => …) for every inbound packet, from any sender */
     onData:      (cb) => window.steam?.net.onData(cb),
+    /**
+     * cb(({ steamId64, graceful }) => …) when a peer's connection ends —
+     * `graceful` true for a clean close by the peer, false for a locally
+     * detected problem (timeout, unreachable).
+     *
+     * This is a HINT, not a complete disconnect signal: a hard kill produces
+     * no callback at all, and Steam may reconnect a dropped link on the next
+     * send. Treat it as "react now instead of waiting" on top of your own
+     * keepalive, never as the only thing you listen to.
+     */
+    onClosed:    (cb) => window.steam?.net.onClosed?.(cb),
 };
 
 // ── Window ────────────────────────────────────────────────────────────────────

@@ -39,8 +39,9 @@ contextBridge.exposeInMainWorld('steam', {
         onJoinRequested:   (cb) => ipcRenderer.on('steam:lobbyJoinRequested', (_e, data) => cb(data)),
     },
     net: {
-        send:   (steamId64, payload) => ipcRenderer.invoke('steam:netSend', steamId64, payload),
-        onData: (cb) => ipcRenderer.on('steam:p2pData', (_e, data) => cb(data)),
+        send:     (steamId64, payload) => ipcRenderer.invoke('steam:netSend', steamId64, payload),
+        onData:   (cb) => ipcRenderer.on('steam:p2pData', (_e, data) => cb(data)),
+        onClosed: (cb) => ipcRenderer.on('steam:p2pClosed', (_e, data) => cb(data)),
     },
 });
 
