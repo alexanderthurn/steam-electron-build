@@ -235,6 +235,17 @@ export async function mirrorLocalStorage({ file, prefix = '', excludePrefix, exc
         timer = setTimeout(() => void flush(), debounceMs);
     };
 
+    // Converge the file to what this machine actually has, once, at startup.
+    // Writes only happen on change below, so without this a machine's settings
+    // never reach the file until the player happens to touch one — and after a
+    // rename (or a fresh install that pulled nothing down) the file simply does
+    // not exist, so there is no backup and no cloud copy. Guarded by a
+    // comparison rather than written unconditionally: a launch that changes
+    // nothing must not produce a write, which is what makes cloud conflicts.
+    if (JSON.stringify(stored?.[MIRROR_FIELD] ?? {}) !== JSON.stringify(snapshot())) {
+        await flush();
+    }
+
     const nativeSet = localStorage.setItem.bind(localStorage);
     const nativeRemove = localStorage.removeItem.bind(localStorage);
     const nativeClear = localStorage.clear.bind(localStorage);
