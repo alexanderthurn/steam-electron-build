@@ -1129,8 +1129,31 @@ ipcMain.handle('storage:readAll', (_e, file) => {
     return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '{}';
 });
 
-ipcMain.handle('storage:writeAll', (_e, data, file) =>
-    fs.writeFileSync(getSavePath(file), data, 'utf8'));
+/**
+ * Written to a temp file and renamed over the target, because writeFileSync
+ * truncates first: there is a window on EVERY save where the real file is
+ * empty or half a JSON document, and a crash or power loss inside it leaves
+ * exactly that on disk. Readers survive it (a parse failure is treated as no
+ * data) but the player silently loses everything in that file.
+ *
+ * rename is atomic on one filesystem, and the temp sits in the same directory,
+ * so a reader sees the whole old file or the whole new one and never a piece of
+ * either. It buys atomicity, not durability — a crash before the OS flushes can
+ * still lose the NEW contents, which is fine: the previous save survives intact,
+ * where before it was destroyed.
+ */
+ipcMain.handle('storage:writeAll', (_e, data, file) => {
+    const target = getSavePath(file);
+    const tmp = `${target}.tmp`;
+    try {
+        fs.writeFileSync(tmp, data, 'utf8');
+        fs.renameSync(tmp, target);
+    } catch (e) {
+        // never leave our own debris behind for the next read to trip over
+        try { fs.rmSync(tmp, { force: true }); } catch { /* already gone */ }
+        throw e;
+    }
+});
 
 ipcMain.handle('storage:getPath', (_e, file) =>
     getSavePath(file));
