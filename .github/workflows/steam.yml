@@ -11,8 +11,27 @@
 #       uses: alexanderthurn/steam-electron-build/.github/workflows/steam.yml@main
 #       secrets: inherit
 #
-# Required repo secrets for the deploy step (build-only works without them):
-#   STEAM_USERNAME, STEAM_CONFIG_VDF, STEAM_APP_ID, STEAM_RELEASE_BRANCH
+# A game, its demo and its playtest are separate Steam apps with separate depots,
+# but the same build. Which one a tag ships to is decided by the branch the
+# tagged commit sits on, declared in the game's package.json:
+#
+#   "steamElectronBuild": {
+#     "steamAppId": 480,
+#     "steamBranchApps": { "main": 480, "demo": 481, "playtest": 482 }
+#   }
+#
+# So a v* tag on `playtest` uploads to 482 and one on `main` to 480 — no second
+# workflow, no branch-specific config in the game repo. List the branches in
+# merge order, upstream first: `main` flows down into `playtest`, so a commit on
+# `main` is contained by both and the first listed match wins. Games without the
+# map ship every tag to secrets.STEAM_APP_ID, as before.
+#
+# The corollary: a downstream branch only claims a tag once it has a commit the
+# trunk does not. A `playtest` sitting exactly on `main` is main, and its tags
+# ship to the game — merge into it (or bump it) before tagging.
+#
+# Required repo secrets: STEAM_USERNAME, STEAM_CONFIG_VDF (+ STEAM_APP_ID when
+# steamBranchApps is absent).
 
 name: Steam Build & Deploy
 
@@ -27,8 +46,75 @@ on:
         description: Upload to Steam on v* tags
         type: boolean
         default: true
+      release-branch:
+        description: Steam branch the build is set live on
+        type: string
+        default: develop
 
 jobs:
+  # Resolves tag -> branch -> Steam app, in parallel with the builds. A tag cut
+  # on a branch nobody mapped fails the run here rather than shipping a playtest
+  # build into the game's depots.
+  target:
+    if: inputs.deploy && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    outputs:
+      app-id: ${{ steps.resolve.outputs.app-id }}
+      channel: ${{ steps.resolve.outputs.channel }}
+      product: ${{ steps.resolve.outputs.product }}
+      executable: ${{ steps.resolve.outputs.executable }}
+    steps:
+      # fetch-depth 0 — a tag carries no branch, so the branches that contain it
+      # have to be fetched to be asked.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - id: resolve
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+
+          product=$(jq -r '.steamElectronBuild.productName // .name // "game"' package.json)
+          executable=$(jq -r '.steamElectronBuild.executableName // empty' package.json)
+          if [ -z "$executable" ]; then
+            # same slug rule as the CLI's loadConfig
+            executable=$(printf '%s' "$product" | tr '[:upper:]' '[:lower:]' \
+              | sed -e 's/[^a-z0-9]\+/-/g' -e 's/^-//' -e 's/-$//')
+          fi
+          echo "product=$product"       >> "$GITHUB_OUTPUT"
+          echo "executable=$executable" >> "$GITHUB_OUTPUT"
+
+          mapped=$(jq -r '.steamElectronBuild.steamBranchApps // {} | keys_unsorted[]?' package.json)
+          if [ -z "$mapped" ]; then
+            echo "no steamBranchApps — falling back to the STEAM_APP_ID secret"
+            exit 0
+          fi
+
+          # checkout fetches every branch at fetch-depth 0, but ask again rather
+          # than depend on that — an unfetched branch reads as "does not contain".
+          git fetch --prune --quiet origin '+refs/heads/*:refs/remotes/origin/*'
+          containing=$(git branch -r --contains "$GITHUB_SHA" --format='%(refname:lstrip=3)' \
+            | grep -vx 'HEAD' || true)
+          echo "tag is on: $(echo "$containing" | tr '\n' ' ')"
+
+          for branch in $mapped; do
+            if printf '%s\n' "$containing" | grep -qx -- "$branch"; then
+              app=$(jq -r --arg b "$branch" '.steamElectronBuild.steamBranchApps[$b]' package.json)
+              echo "app-id=$app"      >> "$GITHUB_OUTPUT"
+              echo "channel=$branch"  >> "$GITHUB_OUTPUT"
+              {
+                echo "### Steam target: \`$branch\` -> app $app"
+                echo ""
+                echo "\`${GITHUB_REF_NAME}\` is on: $(echo "$containing" | tr '\n' ' ')"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          done
+
+          echo "::error::${GITHUB_REF_NAME} is on no branch in steamBranchApps ($(echo "$mapped" | tr '\n' ' ')) — refusing to guess which app to ship to"
+          exit 1
+
   build:
     strategy:
       matrix:
@@ -60,8 +146,7 @@ jobs:
           path: ${{ inputs.working-directory }}/dist-electron/${{ matrix.target }}/
 
   deploy-steam:
-    needs: build
-    if: inputs.deploy && startsWith(github.ref, 'refs/tags/v')
+    needs: [target, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -69,8 +154,13 @@ jobs:
           path: steam-builds
 
       # Steam accepts a build with zero files without complaining, so a change in
-      # how artifacts land on disk would silently ship an empty depot.
+      # how artifacts land on disk would silently ship an empty depot. The launch
+      # executables are named explicitly because that is what Steam runs — a depot
+      # that installs but has no exe is the same rejection as an empty one.
       - name: Verify depot contents
+        env:
+          PRODUCT: ${{ needs.target.outputs.product }}
+          EXECUTABLE: ${{ needs.target.outputs.executable }}
         run: |
           for d in win mac linux; do
             if [ ! -d "steam-builds/$d" ] || [ -z "$(ls -A "steam-builds/$d")" ]; then
@@ -79,15 +169,24 @@ jobs:
             fi
             echo "$d: $(du -sh "steam-builds/$d" | cut -f1)"
           done
+          for entry in "win/$PRODUCT.exe" "mac/$PRODUCT.app" "linux/$EXECUTABLE"; do
+            if [ ! -e "steam-builds/$entry" ]; then
+              echo "steam-builds/$entry is missing — Steam's launch option would find nothing"
+              exit 1
+            fi
+          done
+          echo "launch executables: $PRODUCT.exe · $PRODUCT.app · $EXECUTABLE"
 
+      # Depot ids follow the steam-deploy convention: appid+1 (win), +2 (mac),
+      # +3 (linux) — for the demo and playtest apps just as for the game.
       - name: Publish to Steam
         uses: game-ci/steam-deploy@v3
         with:
           username: ${{ secrets.STEAM_USERNAME }}
           configVdf: ${{ secrets.STEAM_CONFIG_VDF }}
-          appId: ${{ secrets.STEAM_APP_ID }}
-          buildDescription: "${{ github.ref_name }} (GitHub Action)"
-          releaseBranch: ${{ secrets.STEAM_RELEASE_BRANCH }}
+          appId: ${{ needs.target.outputs.app-id || secrets.STEAM_APP_ID }}
+          buildDescription: "${{ github.ref_name }} ${{ needs.target.outputs.channel }} (GitHub Action)"
+          releaseBranch: ${{ inputs.release-branch }}
           depot1Path: steam-builds/win
           depot2Path: steam-builds/mac
           depot3Path: steam-builds/linux

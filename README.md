@@ -204,6 +204,11 @@ All optional, in your `package.json`:
   "productName": "My Game",          // default: package name
   "appId": "com.studio.mygame",      // bundle identifier (also the save folder name)
   "steamAppId": 1234567,             // default: 480 (Spacewar)
+  "steamBranchApps": {               // optional: which app a v* tag ships to,
+    "main": 1234567,                 //   by the branch the tagged commit is on
+    "demo": 1234570,                 //   (upstream branches first)
+    "playtest": 1234580
+  },
   "executableName": "mygame",        // linux binary name
   "dist": "dist",                    // your web build output dir
   "icon": "icon.png",                // 512x512 png (all platform icons derive from it)
@@ -250,17 +255,32 @@ Every run builds Windows, macOS and Linux and uploads them as artifacts. On a `v
 |---|---|
 | `STEAM_USERNAME` | Steamworks build account |
 | `STEAM_CONFIG_VDF` | see the [steam-deploy docs](https://github.com/game-ci/steam-deploy#configvdf) |
-| `STEAM_APP_ID` | your app id |
-| `STEAM_RELEASE_BRANCH` | e.g. `prerelease` |
+| `STEAM_APP_ID` | your app id — only when `steamBranchApps` is absent |
 
 Depot mapping follows the steam-deploy convention: depot ids appid+1 (win), +2 (mac), +3 (linux). Since CI just runs `npx steam-electron-build build`, a CI build and a local build are identical by construction.
+
+The build is set live on Steam's `develop` branch; pass `with: { release-branch: … }` for anything else. (`STEAM_RELEASE_BRANCH` is no longer read.) Steam refuses to let steamcmd set a **default** branch live, so `public` stays a click in App Admin → Builds.
+
+### One workflow, several apps
+
+A game, its demo and its playtest are separate Steam apps with separate depots but the same build. Map branch → app in `package.json` and the workflow routes each tag by the branch its commit is on:
+
+```jsonc
+"steamBranchApps": { "main": 1234567, "demo": 1234570, "playtest": 1234580 }
+```
+
+A `v*` tag on `playtest` then uploads to 1234580 (depots …81/82/83), one on `main` to 1234567 — same workflow, same secrets, nothing branch-specific in the game repo. List the branches in **merge order, upstream first**: `main` flows down into `demo` and `playtest`, so a commit on `main` is contained by all three and the first listed match wins. A tag on a branch that is in no map entry fails the run rather than guessing. The corollary: a downstream branch only claims a tag once it has a commit the trunk does not — a `playtest` sitting exactly on `main` *is* main, so merge into it before tagging.
+
+Demos and playtests need their **own** depots. A shared depot from the base app is only licensed to owners of that app — a playtester who owns only the playtest downloads nothing and Steam reports a missing executable — and Steamworks refuses depot sharing from an unreleased app outright.
 
 ## Steam release checklist (once per game)
 
 1. Steamworks partner portal: create the app + three depots (win/mac/linux)
 2. Set `steamAppId` in your `steamElectronBuild` config
-3. Add the workflow + secrets above
-4. `git tag v1.0.0 && git push --tags`
+3. Steamworks → Installation → General: add a launch option per OS — `<productName>.exe`, `<productName>.app`, and the **lowercase** `executableName` for Linux, each with its `oslist` set. Publish it: an unpublished launch option is an unlaunchable game.
+4. Add the workflow + secrets above
+5. `git tag v1.0.0 && git push --tags`
+6. Steamworks → Builds: set the build live on the branch you want (the default branch cannot be set live from CI)
 
 ## High-DPI UI scaling
 
