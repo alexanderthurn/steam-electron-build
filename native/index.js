@@ -16,6 +16,13 @@ export const steam = {
     getAvatarDataUrl:   () => window.steam?.getAvatarDataUrl?.() ?? Promise.resolve(null),
     /** Steam beta branch name, or null / '' when on the default (public) branch */
     getCurrentBetaName: () => window.steam?.getCurrentBetaName?.() ?? Promise.resolve(null),
+    /**
+     * Steamworks current game language API name (e.g. 'english', 'german',
+     * 'schinese', 'brazilian'). Null outside Steam / when the API is missing.
+     * Prefer this over navigator.language for first-run UI localization.
+     */
+    getCurrentGameLanguage: () =>
+        window.steam?.getCurrentGameLanguage?.() ?? Promise.resolve(null),
     /** App id we were launched as — differs from the configured one under a playtest or demo; 0 outside Steam. */
     getAppId:           () => window.steam?.getAppId?.() ?? Promise.resolve(0),
     unlockAchievement:  (id) => window.steam?.unlockAchievement(id) ?? Promise.resolve(),

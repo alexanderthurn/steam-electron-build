@@ -920,6 +920,19 @@ ipcMain.handle('steam:getCurrentBetaName', () => {
     return name && String(name).trim() ? String(name) : null;
 });
 
+/** Steamworks game UI language (per-game override, else Steam client language). */
+ipcMain.handle('steam:getCurrentGameLanguage', () => {
+    try {
+        const lang =
+            steam?.apps?.getCurrentGameLanguage?.() ??
+            steam?.getCurrentGameLanguage?.();
+        return lang && String(lang).trim() ? String(lang) : null;
+    } catch (e) {
+        console.warn('[Steam] getCurrentGameLanguage failed:', e.message);
+        return null;
+    }
+});
+
 ipcMain.handle('steam:isDev', () =>
     !app.isPackaged);
 

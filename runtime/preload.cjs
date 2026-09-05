@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('steam', {
     getAvatarDataUrl:        () => ipcRenderer.invoke('steam:getAvatarDataUrl'),
     getAppId:                () => ipcRenderer.invoke('steam:getAppId'),
     getCurrentBetaName:      () => ipcRenderer.invoke('steam:getCurrentBetaName'),
+    getCurrentGameLanguage:  () => ipcRenderer.invoke('steam:getCurrentGameLanguage'),
     isDev:                   () => ipcRenderer.invoke('steam:isDev'),
     quit:                    () => ipcRenderer.invoke('steam:quit'),
     activateOverlay:         (dialog) => ipcRenderer.invoke('steam:activateOverlay', dialog || 'Friends'),
