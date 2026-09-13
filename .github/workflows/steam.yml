@@ -11,27 +11,25 @@
 #       uses: alexanderthurn/steam-electron-build/.github/workflows/steam.yml@main
 #       secrets: inherit
 #
-# A game, its demo and its playtest are separate Steam apps with separate depots,
-# but the same build. Which one a tag ships to is decided by the branch the
-# tagged commit sits on, declared in the game's package.json:
+# Prefer steamDeployApps when the same build should land on several Steam apps
+# (game + playtest/demo) from one tag — typical when Steam's develop branch is
+# where you choose what goes live:
 #
 #   "steamElectronBuild": {
 #     "steamAppId": 480,
-#     "steamBranchApps": { "main": 480, "demo": 481, "playtest": 482 }
+#     "steamDeployApps": [480, 481]
 #   }
 #
-# So a v* tag on `playtest` uploads to 482 and one on `main` to 480 — no second
-# workflow, no branch-specific config in the game repo. List the branches in
-# merge order, upstream first: `main` flows down into `playtest`, so a commit on
-# `main` is contained by both and the first listed match wins. Games without the
-# map ship every tag to secrets.STEAM_APP_ID, as before.
+# Legacy alternative: steamBranchApps routes a tag to one app by the branch the
+# tagged commit sits on:
 #
-# The corollary: a downstream branch only claims a tag once it has a commit the
-# trunk does not. A `playtest` sitting exactly on `main` is main, and its tags
-# ship to the game — merge into it (or bump it) before tagging.
+#   "steamBranchApps": { "main": 480, "demo": 481, "playtest": 482 }
+#
+# List those branches in merge order, upstream first. Games with neither map
+# ship every tag to steamAppId, then secrets.STEAM_APP_ID.
 #
 # Required repo secrets: STEAM_USERNAME, STEAM_CONFIG_VDF (+ STEAM_APP_ID when
-# steamBranchApps is absent).
+# no app id is configured in package.json).
 
 name: Steam Build & Deploy
 
@@ -52,20 +50,18 @@ on:
         default: develop
 
 jobs:
-  # Resolves tag -> branch -> Steam app, in parallel with the builds. A tag cut
-  # on a branch nobody mapped fails the run here rather than shipping a playtest
-  # build into the game's depots.
+  # Resolves which Steam app id(s) this tag ships to, in parallel with builds.
   target:
     if: inputs.deploy && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     outputs:
-      app-id: ${{ steps.resolve.outputs.app-id }}
+      app-ids: ${{ steps.resolve.outputs.app-ids }}
       channel: ${{ steps.resolve.outputs.channel }}
       product: ${{ steps.resolve.outputs.product }}
       executable: ${{ steps.resolve.outputs.executable }}
     steps:
       # fetch-depth 0 — a tag carries no branch, so the branches that contain it
-      # have to be fetched to be asked.
+      # have to be fetched when resolving steamBranchApps.
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -85,35 +81,63 @@ jobs:
           echo "product=$product"       >> "$GITHUB_OUTPUT"
           echo "executable=$executable" >> "$GITHUB_OUTPUT"
 
-          mapped=$(jq -r '.steamElectronBuild.steamBranchApps // {} | keys_unsorted[]?' package.json)
-          if [ -z "$mapped" ]; then
-            echo "no steamBranchApps — falling back to the STEAM_APP_ID secret"
+          deploy_apps=$(jq -c '.steamElectronBuild.steamDeployApps // empty' package.json)
+          if [ -n "$deploy_apps" ] && [ "$deploy_apps" != "null" ] && [ "$deploy_apps" != "[]" ]; then
+            if ! jq -e 'type == "array" and length > 0 and all(.[]; type == "number")' \
+              <<<"$deploy_apps" >/dev/null; then
+              echo "::error::steamDeployApps must be a non-empty JSON array of app ids"
+              exit 1
+            fi
+            echo "app-ids=$deploy_apps" >> "$GITHUB_OUTPUT"
+            echo "channel=all"          >> "$GITHUB_OUTPUT"
+            {
+              echo "### Steam targets: \`$deploy_apps\`"
+              echo ""
+              echo "\`${GITHUB_REF_NAME}\` → every id in steamDeployApps"
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          # checkout fetches every branch at fetch-depth 0, but ask again rather
-          # than depend on that — an unfetched branch reads as "does not contain".
-          git fetch --prune --quiet origin '+refs/heads/*:refs/remotes/origin/*'
-          containing=$(git branch -r --contains "$GITHUB_SHA" --format='%(refname:lstrip=3)' \
-            | grep -vx 'HEAD' || true)
-          echo "tag is on: $(echo "$containing" | tr '\n' ' ')"
+          mapped=$(jq -r '.steamElectronBuild.steamBranchApps // {} | keys_unsorted[]?' package.json)
+          if [ -n "$mapped" ]; then
+            # checkout fetches every branch at fetch-depth 0, but ask again rather
+            # than depend on that — an unfetched branch reads as "does not contain".
+            git fetch --prune --quiet origin '+refs/heads/*:refs/remotes/origin/*'
+            containing=$(git branch -r --contains "$GITHUB_SHA" --format='%(refname:lstrip=3)' \
+              | grep -vx 'HEAD' || true)
+            echo "tag is on: $(echo "$containing" | tr '\n' ' ')"
 
-          for branch in $mapped; do
-            if printf '%s\n' "$containing" | grep -qx -- "$branch"; then
-              app=$(jq -r --arg b "$branch" '.steamElectronBuild.steamBranchApps[$b]' package.json)
-              echo "app-id=$app"      >> "$GITHUB_OUTPUT"
-              echo "channel=$branch"  >> "$GITHUB_OUTPUT"
-              {
-                echo "### Steam target: \`$branch\` -> app $app"
-                echo ""
-                echo "\`${GITHUB_REF_NAME}\` is on: $(echo "$containing" | tr '\n' ' ')"
-              } >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-          done
+            for branch in $mapped; do
+              if printf '%s\n' "$containing" | grep -qx -- "$branch"; then
+                app=$(jq -r --arg b "$branch" '.steamElectronBuild.steamBranchApps[$b]' package.json)
+                echo "app-ids=[$app]"   >> "$GITHUB_OUTPUT"
+                echo "channel=$branch"  >> "$GITHUB_OUTPUT"
+                {
+                  echo "### Steam target: \`$branch\` -> app $app"
+                  echo ""
+                  echo "\`${GITHUB_REF_NAME}\` is on: $(echo "$containing" | tr '\n' ' ')"
+                } >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+            done
 
-          echo "::error::${GITHUB_REF_NAME} is on no branch in steamBranchApps ($(echo "$mapped" | tr '\n' ' ')) — refusing to guess which app to ship to"
-          exit 1
+            echo "::error::${GITHUB_REF_NAME} is on no branch in steamBranchApps ($(echo "$mapped" | tr '\n' ' ')) — refusing to guess which app to ship to"
+            exit 1
+          fi
+
+          steam_app_id=$(jq -r '.steamElectronBuild.steamAppId // empty' package.json)
+          if [ -n "$steam_app_id" ] && [ "$steam_app_id" != "null" ]; then
+            echo "app-ids=[$steam_app_id]" >> "$GITHUB_OUTPUT"
+            echo "channel=default"         >> "$GITHUB_OUTPUT"
+            echo "no steamDeployApps / steamBranchApps — using steamAppId $steam_app_id"
+            exit 0
+          fi
+
+          # One empty matrix slot so the deploy job still runs; the publish step
+          # then falls back to secrets.STEAM_APP_ID.
+          echo 'app-ids=[""]'    >> "$GITHUB_OUTPUT"
+          echo "channel=secret"  >> "$GITHUB_OUTPUT"
+          echo "no package.json app id — deploy will use the STEAM_APP_ID secret"
 
   build:
     strategy:
@@ -148,6 +172,10 @@ jobs:
   deploy-steam:
     needs: [target, build]
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app-id: ${{ fromJSON(needs.target.outputs.app-ids) }}
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -184,7 +212,7 @@ jobs:
         with:
           username: ${{ secrets.STEAM_USERNAME }}
           configVdf: ${{ secrets.STEAM_CONFIG_VDF }}
-          appId: ${{ needs.target.outputs.app-id || secrets.STEAM_APP_ID }}
+          appId: ${{ matrix.app-id || secrets.STEAM_APP_ID }}
           buildDescription: "${{ github.ref_name }} ${{ needs.target.outputs.channel }} (GitHub Action)"
           releaseBranch: ${{ inputs.release-branch }}
           depot1Path: steam-builds/win
