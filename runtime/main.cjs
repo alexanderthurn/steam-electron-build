@@ -128,6 +128,7 @@ function initSteam() {
         initNetworking();
         startSteamPumps();
         emitConnectLobbyFromArgv();
+        listenForLobbyJoinRequests();
     } catch (e) {
         console.warn('[Steam] Init failed:', e.message);
         steam = null;
@@ -339,8 +340,8 @@ let pendingConnectLobby = null;
 
 function emitConnectLobbyFromArgv() {
     // Steam launches with `+connect_lobby <id>` when the user accepts a
-    // Join Game invite that starts the app. ffi-node does not yet expose
-    // GameLobbyJoinRequested for already-running instances.
+    // Join Game invite that starts the app (an already-running instance gets
+    // GameLobbyJoinRequested instead — see listenForLobbyJoinRequests).
     const args = process.argv;
     for (let i = 0; i < args.length; i++) {
         let lobbySteamId = null;
@@ -359,6 +360,26 @@ function emitConnectLobbyFromArgv() {
         pendingConnectLobby = lobbySteamId;
         setTimeout(() => safeSend('steam:lobbyJoinRequested', { lobbySteamId }), 500);
         return;
+    }
+}
+
+/**
+ * An invite accepted while the game is already running: Steam fires
+ * GameLobbyJoinRequested_t instead of relaunching with +connect_lobby. Routed
+ * through the same channel as the launch case, so the renderer handles both
+ * alike (held for takePendingLobby too, in case it is not listening yet).
+ */
+function listenForLobbyJoinRequests() {
+    if (typeof steam?.matchmaking?.onGameLobbyJoinRequested !== 'function') return;
+    try {
+        steam.matchmaking.onGameLobbyJoinRequested((event) => {
+            const lobbySteamId = String(event?.lobbyId ?? event?.lobbySteamId ?? '');
+            if (!lobbySteamId || lobbySteamId === '0') return;
+            pendingConnectLobby = lobbySteamId;
+            safeSend('steam:lobbyJoinRequested', { lobbySteamId });
+        });
+    } catch (e) {
+        console.warn('[Steam] onGameLobbyJoinRequested failed:', e.message);
     }
 }
 
