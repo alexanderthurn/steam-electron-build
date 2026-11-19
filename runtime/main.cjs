@@ -85,6 +85,20 @@ if (process.platform === 'linux') {
     app.commandLine.appendSwitch('no-zygote');
 }
 
+// ── Launch options ────────────────────────────────────────────────────────────
+// Chromium switches only work before the app is ready, so a game setting that
+// needs one is written by the game (storage.save(…, 'launch.json')) and applies
+// from the next start. Machine-specific like window-state.json, never a .sav.
+//   { "vsync": false }   uncapped frame rate (no VSync, no refresh-rate limit)
+try {
+    const launch = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'launch.json'), 'utf8'));
+    if (launch && launch.vsync === false) {
+        app.commandLine.appendSwitch('disable-frame-rate-limit');
+        app.commandLine.appendSwitch('disable-gpu-vsync');
+        console.log('[launch] VSync off: frame rate uncapped');
+    }
+} catch { /* absent or corrupt: defaults */ }
+
 // ── Steam ─────────────────────────────────────────────────────────────────────
 
 let SteamworksSDK = null; // module

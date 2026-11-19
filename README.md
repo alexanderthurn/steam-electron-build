@@ -328,6 +328,21 @@ would put the window off the screen. Restored bounds are also clamped to a
 display that currently exists, so unplugging a monitor or changing resolution
 falls back to the default size rather than opening off-screen.
 
+## Launch options (VSync)
+
+Some settings need Chromium switches, which only work before the app is ready.
+The game writes them to `launch.json` in the app-data dir and they apply from
+the next start:
+
+```js
+import { storage } from 'steam-electron-build/native';
+await storage.save({ vsync: false }, 'launch.json'); // uncapped frame rate after a restart
+```
+
+`vsync: false` adds `disable-frame-rate-limit` and `disable-gpu-vsync`: the frame
+rate is no longer held to the monitor's refresh rate. Like `window-state.json`
+the file is machine-specific, not a `.sav`.
+
 ## Debugging a packaged build
 
 `F12` opens devtools. In a packaged build it is ignored unless you opt in, since
