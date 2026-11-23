@@ -213,6 +213,10 @@ jobs:
           username: ${{ secrets.STEAM_USERNAME }}
           configVdf: ${{ secrets.STEAM_CONFIG_VDF }}
           appId: ${{ matrix.app-id || secrets.STEAM_APP_ID }}
+          # Pinned: with 'latest' the action asks the GitHub API for the newest release
+          # unauthenticated (60/h per IP, shared by all jobs on the runner) and failed
+          # with 403 whenever another job had used that up. Raise by hand when needed.
+          cliVersion: v0.1.77
           buildDescription: "${{ github.ref_name }} ${{ needs.target.outputs.channel }} (GitHub Action)"
           releaseBranch: ${{ inputs.release-branch }}
           depot1Path: steam-builds/win
