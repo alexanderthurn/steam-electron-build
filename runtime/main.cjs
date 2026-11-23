@@ -90,14 +90,79 @@ if (process.platform === 'linux') {
 // needs one is written by the game (storage.save(…, 'launch.json')) and applies
 // from the next start. Machine-specific like window-state.json, never a .sav.
 //   { "vsync": false }   uncapped frame rate (no VSync, no refresh-rate limit)
-try {
-    const launch = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'launch.json'), 'utf8'));
-    if (launch && launch.vsync === false) {
+//                        Windows/Linux only: on macOS (Electron 43 / Chrome 150) these
+//                        switches crash the GPU process at start (exit_code=11) and
+//                        leave a blank white window, so they are ignored there.
+//
+// Safety net for VSync off, since a crash there would otherwise leave a game the
+// player can't fix (launch.json is out of reach for most):
+//   1. the GPU process dies within LAUNCH_CHECK_MS of the start → launch.json gets
+//      vsync:true for the next start (a GPU crash leaves the main process alive —
+//      Windows, macOS; no automatic restart);
+//   2. the whole app dies (Linux runs in-process-gpu, so a GPU crash takes the main
+//      process with it) → launch-check.json, written before the start, is still
+//      there next time: vsync:true before any switch.
+// No loop: both turn VSync back on, and with VSync on neither of them is armed.
+const LAUNCH_FILE = 'launch.json';
+const LAUNCH_CHECK_FILE = 'launch-check.json';
+const LAUNCH_CHECK_MS = 10_000;
+const launchPath = (file) => path.join(app.getPath('userData'), file);
+let vsyncOffArmed = false; // this start runs with VSync off and is still being checked
+
+function readLaunch() {
+    try { return JSON.parse(fs.readFileSync(launchPath(LAUNCH_FILE), 'utf8')) || {}; }
+    catch { return {}; } // absent or corrupt: defaults
+}
+
+/** VSync back on (other launch options kept) and the check marker gone */
+function resetVsync(why) {
+    try {
+        fs.mkdirSync(app.getPath('userData'), { recursive: true });
+        fs.writeFileSync(launchPath(LAUNCH_FILE), JSON.stringify({ ...readLaunch(), vsync: true }), 'utf8');
+    } catch (e) { console.warn('[launch] could not reset VSync:', e.message); }
+    try { fs.rmSync(launchPath(LAUNCH_CHECK_FILE), { force: true }); } catch { /* gone */ }
+    console.log(`[launch] VSync off ${why} — turned back on`);
+}
+
+{
+    let launch = readLaunch();
+    if (launch.vsync === false && fs.existsSync(launchPath(LAUNCH_CHECK_FILE))) {
+        // the last VSync-off start never passed its check: it died (layer 2)
+        resetVsync('did not survive the last start');
+        launch = readLaunch();
+    }
+    if (launch.vsync === false && process.platform === 'darwin') {
+        console.log('[launch] VSync off ignored on macOS (crashes the GPU process)');
+    } else if (launch.vsync === false) {
+        try {
+            fs.mkdirSync(app.getPath('userData'), { recursive: true });
+            fs.writeFileSync(launchPath(LAUNCH_CHECK_FILE), JSON.stringify({ started: Date.now() }), 'utf8');
+        } catch { /* no marker: layer 1 still guards */ }
+        vsyncOffArmed = true;
         app.commandLine.appendSwitch('disable-frame-rate-limit');
         app.commandLine.appendSwitch('disable-gpu-vsync');
         console.log('[launch] VSync off: frame rate uncapped');
     }
-} catch { /* absent or corrupt: defaults */ }
+}
+
+// layer 1: a GPU crash while the VSync-off start is still being checked
+app.on('child-process-gone', (_e, details) => {
+    if (!vsyncOffArmed || details.type !== 'GPU') return;
+    vsyncOffArmed = false;
+    // no restart: this session keeps its switches, the next start is back to VSync on
+    resetVsync(`crashed the GPU process (${details.reason}, exit ${details.exitCode})`);
+});
+
+/** the page has loaded: once it stays up for LAUNCH_CHECK_MS, VSync off passed its check */
+function passLaunchCheckSoon() {
+    if (!vsyncOffArmed) return;
+    setTimeout(() => {
+        if (!vsyncOffArmed) return;
+        vsyncOffArmed = false;
+        try { fs.rmSync(launchPath(LAUNCH_CHECK_FILE), { force: true }); } catch { /* gone */ }
+        console.log('[launch] VSync off: start check passed');
+    }, LAUNCH_CHECK_MS);
+}
 
 // ── Steam ─────────────────────────────────────────────────────────────────────
 
@@ -628,6 +693,7 @@ function createWindow() {
     mainWin.webContents.on('did-finish-load', () => {
         applyUiZoom();
         maybeAttachNativeOverlay();
+        passLaunchCheckSoon();
     });
 
     // Remember geometry only while windowed — capturing bounds in fullscreen or

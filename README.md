@@ -340,8 +340,22 @@ await storage.save({ vsync: false }, 'launch.json'); // uncapped frame rate afte
 ```
 
 `vsync: false` adds `disable-frame-rate-limit` and `disable-gpu-vsync`: the frame
-rate is no longer held to the monitor's refresh rate. Like `window-state.json`
+rate is no longer held to the monitor's refresh rate. Windows and Linux only: on
+macOS the switches crash the GPU process at start (blank white window), so the
+runtime ignores the option there — hide the setting on macOS. Like `window-state.json`
 the file is machine-specific, not a `.sav`.
+
+A start with VSync off guards itself, since a player can't fix a broken one:
+
+- the GPU process crashes within 10 s → `launch.json` gets `vsync: true`, so the
+  next start is back to normal (no automatic restart);
+- the whole app dies (Linux runs `in-process-gpu`) → `launch-check.json`, written
+  before that start and removed 10 s after the page loaded, is still there on the
+  next start, which then turns VSync back on before adding any switch.
+
+Both log `[launch] VSync off … — turned back on`. A white window without a crash is
+not caught. Closing the game within those 10 s also counts as a failed start (VSync
+comes back on — harmless).
 
 ## Debugging a packaged build
 
