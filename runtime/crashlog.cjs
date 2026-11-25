@@ -215,14 +215,13 @@ function watchWindow(win) {
         });
         win.on('unresponsive', () => incident('page-unresponsive', {}));
         win.on('responsive', () => writeLog('page', 'responsive again'));
-        wc.on('console-message', (e, legacyLevel, legacyMessage, legacyLine, legacySource) => {
-            // Electron ≥ 35: one event object; older: positional (level 0..3)
-            const level = typeof e?.level === 'string' ? e.level : ['debug', 'info', 'warning', 'error'][legacyLevel] ?? 'info';
+        // Electron ≥ 35: one event object (declaring the old positional arguments
+        // makes Electron warn on every message)
+        wc.on('console-message', (e) => {
+            const level = e?.level;
             if (level !== 'warning' && level !== 'error') return;
-            const message = e?.message ?? legacyMessage ?? '';
-            const where = e?.sourceId ?? legacySource ?? '';
-            const line = e?.lineNumber ?? legacyLine ?? '';
-            writeLog(`page-${level}`, `${message}${where ? ` (${path.basename(where)}:${line})` : ''}`);
+            const where = e.sourceId ? ` (${path.basename(e.sourceId)}:${e.lineNumber ?? ''})` : '';
+            writeLog(`page-${level}`, `${e.message ?? ''}${where}`);
         });
     } catch { /* never */ }
 }
