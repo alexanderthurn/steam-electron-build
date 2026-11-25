@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, shell, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { createLan } = require('./lan.cjs');
+const { initCrashLog, watchWindow } = require('./crashlog.cjs');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 // dev:      full config passed by the CLI via env (absolute paths)
@@ -41,6 +42,8 @@ const indexHtml = process.env.STEAM_ELECTRON_BUILD_CONFIG
 app.setName(cfg.productName);
 // Deterministic save location (same in dev and packaged builds)
 app.setPath('userData', path.join(app.getPath('appData'), cfg.appId));
+// the log (userData/logs/) and crash reports — first, so everything after is in it
+initCrashLog(cfg);
 
 // ── Resolve Steamworks SDK redistributables ───────────────────────────────────
 // steamworks-ffi-node cannot legally ship libsteam_api; we stage Valve's
@@ -688,6 +691,7 @@ function createWindow() {
     mainWin.removeMenu();
     mainWin.setMenuBarVisibility(false);
 
+    watchWindow(mainWin);
     mainWin.loadFile(indexHtml);
     // Zoom must be re-applied per load: it is a property of the loaded frame.
     mainWin.webContents.on('did-finish-load', () => {

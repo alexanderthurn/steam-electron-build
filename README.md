@@ -218,7 +218,8 @@ All optional, in your `package.json`:
   "fullscreen": true,                // first-launch window mode (default true)
   "uiScale": true,                   // false disables high-DPI page zoom (default on)
   "lan": false,                      // opt-in LAN PeerServer + UDP discovery (default false)
-  "lanDiscoveryPort": 41234          // optional; only used when lan is true
+  "lanDiscoveryPort": 41234,         // optional; only used when lan is true
+  "crashReportUrl": "https://example.com/crash.php" // optional: POST crash reports there (https only)
 }
 ```
 
@@ -371,6 +372,32 @@ Use the flag from Steam: **Properties → Launch Options → `--devtools`**, sin
 Steam passes arguments, not environment variables. Bugs that only appear in a
 shipped build — asar paths, install directories containing spaces or `(x86)` —
 are otherwise invisible.
+
+### Crash log and crash reports
+
+Every start writes a log to `<userData>/logs/main.log`. The previous start's log
+is kept as `main.prev.log`. `<userData>` is `~/.config/<appId>` on Linux,
+`~/Library/Application Support/<appId>` on macOS and `%APPDATA%\<appId>` on
+Windows. The log holds:
+- versions, OS, GPU and, on Linux, distro, Wayland/X11, Flatpak, Steam Runtime and Deck;
+- the main process's console;
+- the page's warnings and errors;
+- every process event: GPU, renderer or utility process gone, load failure, page unresponsive.
+
+Lines are written synchronously, so the last line before a hard crash is on disk.
+
+With `crashReportUrl` set, the runtime also POSTs a JSON report there:
+
+```json
+{ "kind": "crash", "key": "renderer-gone", "appVersion": "1.2.3",
+  "platform": "electron-main · linux …", "ts": 0,
+  "data": { "reason": "…", "system": { … }, "logTail": "…last 64 KB of the log…" } }
+```
+
+- **Live:** sent when the app survives the failure. That covers a child or renderer process gone, a page that fails to load, an unresponsive page and a main-process exception.
+- **On the next start:** `<userData>/session.json` is written at start and removed on a clean quit. If it is still there at the next start, the last run died without quitting, for example a GPU crash on Linux (in-process GPU) or a kill. That start then sends `unclean-exit` with the previous log's tail.
+
+A start sends at most 5 reports. A report never blocks or breaks the game.
 
 ## Steam Deck notes
 

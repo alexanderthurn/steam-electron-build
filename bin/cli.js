@@ -55,6 +55,8 @@ function loadConfig() {
         // comes straight from package.json rather than through this function.
         fullscreen: c.fullscreen,
         lanDiscoveryPort: c.lanDiscoveryPort,
+        // Opt-in: where the runtime POSTs crash reports (runtime/crashlog.cjs); https only
+        crashReportUrl: c.crashReportUrl,
         // Off by default: universal roughly doubles mac depot size and build
         // time, and only matters once Intel Macs are worth supporting.
         macUniversal: c.macUniversal === true,
@@ -218,6 +220,7 @@ async function build(cfg, platform) {
             steamAppId: cfg.steamAppId,
             lan: cfg.lan === true,
             ...(cfg.lanDiscoveryPort ? { lanDiscoveryPort: cfg.lanDiscoveryPort } : {}),
+            ...(cfg.crashReportUrl ? { crashReportUrl: cfg.crashReportUrl } : {}),
         },
     }, null, 2));
 
